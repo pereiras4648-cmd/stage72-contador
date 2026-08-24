@@ -1,0 +1,15 @@
+{
+  "name": "stage72-contador",
+  "version": "1.0.0",
+  "description": "Backend da STAGE 72 para lotes e integração com a Nuvemshop",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "express": "^4.21.2"
+  }
+}
