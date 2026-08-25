@@ -3,6 +3,7 @@ const express = require("express");
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+app.use(express.json());
 
 const CLIENT_ID = process.env.NUVEMSHOP_CLIENT_ID;
 const CLIENT_SECRET = process.env.NUVEMSHOP_CLIENT_SECRET;
@@ -58,7 +59,6 @@ app.get("/health", (req, res) => {
 */
 
 app.get("/auth/callback", async (req, res) => {
-
   const code = req.query.code;
 
   if (!code) {
@@ -68,7 +68,9 @@ app.get("/auth/callback", async (req, res) => {
   }
 
   if (!CLIENT_ID || !CLIENT_SECRET) {
-    console.error("Credenciais da Nuvemshop não configuradas.");
+    console.error(
+      "Credenciais da Nuvemshop não configuradas."
+    );
 
     return res.status(500).send(
       "Credenciais da integração não configuradas."
@@ -76,18 +78,15 @@ app.get("/auth/callback", async (req, res) => {
   }
 
   try {
-
     console.log("Código OAuth recebido.");
 
     const response = await fetch(
       "https://www.nuvemshop.com.br/apps/authorize/token",
       {
         method: "POST",
-
         headers: {
           "Content-Type": "application/json"
         },
-
         body: JSON.stringify({
           client_id: CLIENT_ID,
           client_secret: CLIENT_SECRET,
@@ -100,7 +99,6 @@ app.get("/auth/callback", async (req, res) => {
     const data = await response.json();
 
     if (!response.ok) {
-
       console.error(
         "Erro ao obter access token:",
         JSON.stringify(data)
@@ -111,7 +109,7 @@ app.get("/auth/callback", async (req, res) => {
           <body style="
             background:#070707;
             color:#ff6666;
-            font-family:Arial;
+            font-family:Arial,sans-serif;
             text-align:center;
             padding-top:100px;
           ">
@@ -123,20 +121,48 @@ app.get("/auth/callback", async (req, res) => {
     }
 
     /*
-    IMPORTANTE:
-    Não mostramos o access_token no navegador nem nos logs.
+    |--------------------------------------------------------------------------
+    | Diagnóstico seguro
+    |--------------------------------------------------------------------------
+    | Mostra apenas os NOMES dos campos retornados.
+    | Não mostra o access_token.
+    |--------------------------------------------------------------------------
     */
 
-    console.log("Nuvemshop conectada com sucesso.");
-    console.log("Store ID:", data.user_id);
+    console.log(
+      "Campos retornados pela Nuvemshop:",
+      Object.keys(data)
+    );
 
     /*
-    Temporariamente mantemos os dados em memória.
-    Depois vamos colocar isso em banco de dados.
+    |--------------------------------------------------------------------------
+    | Identificação da loja
+    |--------------------------------------------------------------------------
+    | Tentamos os formatos possíveis sem assumir apenas user_id.
+    |--------------------------------------------------------------------------
+    */
+
+    const storeId =
+      data.user_id ??
+      data.store_id ??
+      data.storeId ??
+      data.id ??
+      null;
+
+    console.log("Nuvemshop conectada com sucesso.");
+    console.log("Store ID identificado:", storeId);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Temporário
+    |--------------------------------------------------------------------------
+    | Por enquanto mantemos a conexão em memória.
+    | Depois isso será persistido no PostgreSQL.
+    |--------------------------------------------------------------------------
     */
 
     app.locals.nuvemshop = {
-      storeId: data.user_id,
+      storeId: storeId,
       accessToken: data.access_token
     };
 
@@ -156,9 +182,7 @@ app.get("/auth/callback", async (req, res) => {
           justify-content:center;
           min-height:100vh;
         ">
-
           <div style="text-align:center;">
-
             <h1>STAGE 72</h1>
 
             <h2>LOJA CONECTADA</h2>
@@ -170,15 +194,12 @@ app.get("/auth/callback", async (req, res) => {
             <p>
               Já podemos automatizar o lote.
             </p>
-
           </div>
-
         </body>
       </html>
     `);
 
   } catch (error) {
-
     console.error(
       "Erro no OAuth:",
       error.message
@@ -188,7 +209,6 @@ app.get("/auth/callback", async (req, res) => {
       "Erro interno ao conectar com a Nuvemshop."
     );
   }
-
 });
 
 /*
@@ -198,7 +218,6 @@ app.get("/auth/callback", async (req, res) => {
 */
 
 app.post("/webhooks/orders", (req, res) => {
-
   console.log("Webhook de pedido recebido.");
 
   console.log(
@@ -206,7 +225,6 @@ app.post("/webhooks/orders", (req, res) => {
   );
 
   res.sendStatus(200);
-
 });
 
 /*
@@ -218,35 +236,31 @@ app.post("/webhooks/orders", (req, res) => {
 app.post(
   "/webhooks/lgpd/store-redact",
   (req, res) => {
-
     console.log("LGPD store redact recebido.");
 
     res.sendStatus(200);
-
   }
 );
 
 app.post(
   "/webhooks/lgpd/customers-redact",
   (req, res) => {
-
-    console.log("LGPD customers redact recebido.");
+    console.log(
+      "LGPD customers redact recebido."
+    );
 
     res.sendStatus(200);
-
   }
 );
 
 app.post(
   "/webhooks/lgpd/customers-data-request",
   (req, res) => {
-
     console.log(
       "LGPD customers data request recebido."
     );
 
     res.sendStatus(200);
-
   }
 );
 
@@ -264,7 +278,6 @@ let lote = {
 };
 
 app.get("/api/lote", (req, res) => {
-
   const remaining = Math.max(
     lote.target - lote.current,
     0
@@ -284,7 +297,24 @@ app.get("/api/lote", (req, res) => {
     percentage: percentage,
     closed: lote.current >= lote.target
   });
+});
 
+/*
+|--------------------------------------------------------------------------
+| Diagnóstico da conexão
+|--------------------------------------------------------------------------
+*/
+
+app.get("/api/status", (req, res) => {
+  const connection = app.locals.nuvemshop;
+
+  res.json({
+    ok: true,
+    nuvemshopConnected: Boolean(
+      connection?.accessToken
+    ),
+    storeId: connection?.storeId ?? null
+  });
 });
 
 /*
@@ -297,10 +327,8 @@ app.listen(
   PORT,
   "0.0.0.0",
   () => {
-
     console.log(
       `STAGE 72 rodando na porta ${PORT}`
     );
-
   }
 );
