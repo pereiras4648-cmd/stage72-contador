@@ -4,11 +4,59 @@ const { Pool } = require("pg");
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+/*
+|--------------------------------------------------------------------------
+| CORS
+|--------------------------------------------------------------------------
+| Precisa ficar ANTES das rotas.
+|--------------------------------------------------------------------------
+*/
+
+app.use((req, res, next) => {
+  res.setHeader(
+    "Access-Control-Allow-Origin",
+    "*"
+  );
+
+  res.setHeader(
+    "Access-Control-Allow-Methods",
+    "GET, POST, OPTIONS"
+  );
+
+  res.setHeader(
+    "Access-Control-Allow-Headers",
+    "Content-Type, Accept, Authorization"
+  );
+
+  if (req.method === "OPTIONS") {
+    return res.sendStatus(204);
+  }
+
+  next();
+});
+
+/*
+|--------------------------------------------------------------------------
+| JSON
+|--------------------------------------------------------------------------
+*/
+
 app.use(express.json());
 
-const CLIENT_ID = process.env.NUVEMSHOP_CLIENT_ID;
-const CLIENT_SECRET = process.env.NUVEMSHOP_CLIENT_SECRET;
-const DATABASE_URL = process.env.DATABASE_URL;
+/*
+|--------------------------------------------------------------------------
+| VARIÁVEIS
+|--------------------------------------------------------------------------
+*/
+
+const CLIENT_ID =
+  process.env.NUVEMSHOP_CLIENT_ID;
+
+const CLIENT_SECRET =
+  process.env.NUVEMSHOP_CLIENT_SECRET;
+
+const DATABASE_URL =
+  process.env.DATABASE_URL;
 
 /*
 |--------------------------------------------------------------------------
@@ -19,7 +67,8 @@ const DATABASE_URL = process.env.DATABASE_URL;
 const PRODUCT_ID = 362509901;
 const TARGET = 10;
 
-const API_BASE = "https://api.nuvemshop.com.br/v1";
+const API_BASE =
+  "https://api.nuvemshop.com.br/v1";
 
 const WEBHOOK_URL =
   "https://stage72-contador.onrender.com/webhooks/orders";
@@ -37,11 +86,14 @@ const WEBHOOK_EVENTS = [
 
 const pool = new Pool({
   connectionString: DATABASE_URL,
+
   ssl:
     DATABASE_URL &&
     DATABASE_URL.includes("localhost")
       ? false
-      : { rejectUnauthorized: false }
+      : {
+          rejectUnauthorized: false
+        }
 });
 
 /*
@@ -52,6 +104,7 @@ const pool = new Pool({
 
 async function prepararBanco() {
   try {
+
     /*
     |--------------------------------------------------------------------------
     | LOJAS AUTORIZADAS
@@ -87,10 +140,6 @@ async function prepararBanco() {
       )
     `);
 
-    /*
-    Compatibilidade com versões antigas da tabela lotes.
-    */
-
     await pool.query(`
       ALTER TABLE lotes
       ADD COLUMN IF NOT EXISTS store_id BIGINT
@@ -118,13 +167,8 @@ async function prepararBanco() {
     `);
 
     /*
-    IMPORTANTE:
-
-    A tabela já existia no banco antes de adicionarmos
-    store_id, product_id e quantity.
-
-    CREATE TABLE IF NOT EXISTS não altera uma tabela existente,
-    portanto garantimos as colunas abaixo.
+    Compatibilidade com banco criado
+    pelas versões anteriores.
     */
 
     await pool.query(`
@@ -144,9 +188,10 @@ async function prepararBanco() {
 
     console.log("PostgreSQL conectado.");
     console.log("Tabelas prontas.");
-    console.log("Estrutura de pedidos_processados atualizada.");
+    console.log("CORS STAGE 72 ativo.");
 
   } catch (error) {
+
     console.error(
       "Erro ao preparar PostgreSQL:",
       error.message
@@ -162,9 +207,17 @@ async function prepararBanco() {
 
 function apiHeaders(accessToken) {
   return {
-    Authorization: `Bearer ${accessToken}`,
-    "User-Agent": `STAGE 72 (${CLIENT_ID})`,
-    "Content-Type": "application/json"
+    Authorization:
+      `Bearer ${accessToken}`,
+
+    "User-Agent":
+      `STAGE 72 (${CLIENT_ID})`,
+
+    "Content-Type":
+      "application/json",
+
+    Accept:
+      "application/json"
   };
 }
 
@@ -175,17 +228,22 @@ function apiHeaders(accessToken) {
 */
 
 async function buscarLoja(storeId) {
-  const result = await pool.query(
-    `
-      SELECT
-        store_id,
-        access_token
-      FROM nuvemshop_stores
-      WHERE store_id = $1
-      LIMIT 1
-    `,
-    [storeId]
-  );
+
+  const result =
+    await pool.query(
+      `
+        SELECT
+          store_id,
+          access_token
+
+        FROM nuvemshop_stores
+
+        WHERE store_id = $1
+
+        LIMIT 1
+      `,
+      [storeId]
+    );
 
   return result.rows[0] || null;
 }
@@ -197,57 +255,64 @@ async function buscarLoja(storeId) {
 */
 
 async function garantirLote(storeId) {
-  const existing = await pool.query(
-    `
-      SELECT *
-      FROM lotes
 
-      WHERE
-        store_id = $1
-        AND product_id = $2
-        AND active = TRUE
+  const existing =
+    await pool.query(
+      `
+        SELECT *
 
-      ORDER BY id DESC
-      LIMIT 1
-    `,
-    [
-      storeId,
-      PRODUCT_ID
-    ]
-  );
+        FROM lotes
 
-  if (existing.rows.length > 0) {
+        WHERE
+          store_id = $1
+          AND product_id = $2
+          AND active = TRUE
+
+        ORDER BY id DESC
+
+        LIMIT 1
+      `,
+      [
+        storeId,
+        PRODUCT_ID
+      ]
+    );
+
+  if (
+    existing.rows.length > 0
+  ) {
     return existing.rows[0];
   }
 
-  const created = await pool.query(
-    `
-      INSERT INTO lotes (
-        store_id,
-        product_id,
-        nome,
-        current_quantity,
-        target_quantity,
-        active
-      )
+  const created =
+    await pool.query(
+      `
+        INSERT INTO lotes (
+          store_id,
+          product_id,
+          nome,
+          current_quantity,
+          target_quantity,
+          active
+        )
 
-      VALUES (
-        $1,
-        $2,
-        'STAGE 72',
-        0,
-        $3,
-        TRUE
-      )
+        VALUES (
+          $1,
+          $2,
+          'STAGE 72',
+          0,
+          $3,
+          TRUE
+        )
 
-      RETURNING *
-    `,
-    [
-      storeId,
-      PRODUCT_ID,
-      TARGET
-    ]
-  );
+        RETURNING *
+      `,
+      [
+        storeId,
+        PRODUCT_ID,
+        TARGET
+      ]
+    );
 
   console.log(
     `Lote criado: produto ${PRODUCT_ID} - 0/${TARGET}`
@@ -266,17 +331,23 @@ async function listarWebhooks(
   storeId,
   accessToken
 ) {
-  const response = await fetch(
-    `${API_BASE}/${storeId}/webhooks`,
-    {
-      method: "GET",
-      headers: apiHeaders(accessToken)
-    }
-  );
 
-  const text = await response.text();
+  const response =
+    await fetch(
+      `${API_BASE}/${storeId}/webhooks`,
+      {
+        method: "GET",
+
+        headers:
+          apiHeaders(accessToken)
+      }
+    );
+
+  const text =
+    await response.text();
 
   if (!response.ok) {
+
     throw new Error(
       `Erro listando webhooks: ${response.status} ${text}`
     );
@@ -300,23 +371,29 @@ async function criarWebhook(
   accessToken,
   event
 ) {
-  const response = await fetch(
-    `${API_BASE}/${storeId}/webhooks`,
-    {
-      method: "POST",
 
-      headers: apiHeaders(accessToken),
+  const response =
+    await fetch(
+      `${API_BASE}/${storeId}/webhooks`,
+      {
+        method: "POST",
 
-      body: JSON.stringify({
-        event: event,
-        url: WEBHOOK_URL
-      })
-    }
-  );
+        headers:
+          apiHeaders(accessToken),
 
-  const text = await response.text();
+        body:
+          JSON.stringify({
+            event: event,
+            url: WEBHOOK_URL
+          })
+      }
+    );
+
+  const text =
+    await response.text();
 
   if (!response.ok) {
+
     throw new Error(
       `Erro criando ${event}: ${response.status} ${text}`
     );
@@ -339,6 +416,7 @@ async function configurarWebhooks(
   storeId,
   accessToken
 ) {
+
   const webhooks =
     await listarWebhooks(
       storeId,
@@ -347,7 +425,11 @@ async function configurarWebhooks(
 
   const results = [];
 
-  for (const event of WEBHOOK_EVENTS) {
+  for (
+    const event
+    of WEBHOOK_EVENTS
+  ) {
+
     const exists =
       Array.isArray(webhooks) &&
       webhooks.some(
@@ -357,13 +439,15 @@ async function configurarWebhooks(
       );
 
     if (exists) {
+
       console.log(
         `Webhook ${event} já existe.`
       );
 
       results.push({
         event,
-        status: "already_exists"
+        status:
+          "already_exists"
       });
 
       continue;
@@ -377,7 +461,8 @@ async function configurarWebhooks(
 
     results.push({
       event,
-      status: "created"
+      status:
+        "created"
     });
   }
 
@@ -395,18 +480,23 @@ async function buscarPedido(
   accessToken,
   orderId
 ) {
-  const response = await fetch(
-    `${API_BASE}/${storeId}/orders/${orderId}`,
-    {
-      method: "GET",
-      headers: apiHeaders(accessToken)
-    }
-  );
+
+  const response =
+    await fetch(
+      `${API_BASE}/${storeId}/orders/${orderId}`,
+      {
+        method: "GET",
+
+        headers:
+          apiHeaders(accessToken)
+      }
+    );
 
   const text =
     await response.text();
 
   if (!response.ok) {
+
     throw new Error(
       `Erro buscando pedido ${orderId}: ${response.status} ${text}`
     );
@@ -425,9 +515,10 @@ async function processarPedido(
   storeId,
   orderId
 ) {
+
   /*
   |--------------------------------------------------------------------------
-  | JÁ PROCESSADO?
+  | JÁ FOI PROCESSADO?
   |--------------------------------------------------------------------------
   */
 
@@ -435,8 +526,11 @@ async function processarPedido(
     await pool.query(
       `
         SELECT order_id
+
         FROM pedidos_processados
+
         WHERE order_id = $1
+
         LIMIT 1
       `,
       [orderId]
@@ -445,16 +539,21 @@ async function processarPedido(
   if (
     processed.rows.length > 0
   ) {
+
     console.log(
       `Pedido ${orderId} já processado.`
     );
 
-    return;
+    return {
+      processed: false,
+      reason:
+        "already_processed"
+    };
   }
 
   /*
   |--------------------------------------------------------------------------
-  | TOKEN DA LOJA
+  | LOJA
   |--------------------------------------------------------------------------
   */
 
@@ -462,6 +561,7 @@ async function processarPedido(
     await buscarLoja(storeId);
 
   if (!store) {
+
     throw new Error(
       `Loja ${storeId} não autorizada.`
     );
@@ -469,7 +569,7 @@ async function processarPedido(
 
   /*
   |--------------------------------------------------------------------------
-  | BUSCAR PEDIDO
+  | PEDIDO
   |--------------------------------------------------------------------------
   */
 
@@ -494,11 +594,16 @@ async function processarPedido(
   if (
     order.payment_status !== "paid"
   ) {
+
     console.log(
       `Pedido ${orderId} ainda não está pago.`
     );
 
-    return;
+    return {
+      processed: false,
+      reason:
+        "not_paid"
+    };
   }
 
   /*
@@ -513,7 +618,7 @@ async function processarPedido(
       : [];
 
   /*
-  O produto possui variantes:
+  Todas as variantes:
 
   38
   40
@@ -522,18 +627,16 @@ async function processarPedido(
   46
   48
 
-  Todas usam o mesmo PRODUCT_ID.
-
-  Portanto, ignoramos variant_id
-  e somamos todas as unidades desse produto.
+  pertencem ao mesmo PRODUCT_ID.
   */
 
   const quantity =
     products
       .filter(
         (item) =>
-          Number(item.product_id) ===
-          PRODUCT_ID
+          Number(
+            item.product_id
+          ) === PRODUCT_ID
       )
       .reduce(
         (total, item) =>
@@ -546,11 +649,12 @@ async function processarPedido(
 
   /*
   |--------------------------------------------------------------------------
-  | PEDIDO NÃO TEM O PRODUTO DO LOTE
+  | PEDIDO SEM O PRODUTO
   |--------------------------------------------------------------------------
   */
 
   if (quantity <= 0) {
+
     console.log(
       `Pedido ${orderId} não contém produto ${PRODUCT_ID}.`
     );
@@ -581,7 +685,11 @@ async function processarPedido(
       ]
     );
 
-    return;
+    return {
+      processed: false,
+      reason:
+        "product_not_found"
+    };
   }
 
   /*
@@ -594,11 +702,14 @@ async function processarPedido(
     await pool.connect();
 
   try {
-    await client.query("BEGIN");
+
+    await client.query(
+      "BEGIN"
+    );
 
     /*
-    Garante que um mesmo pedido
-    nunca seja contado duas vezes.
+    Registra primeiro para impedir
+    contagem duplicada.
     */
 
     const inserted =
@@ -634,6 +745,7 @@ async function processarPedido(
     if (
       inserted.rows.length === 0
     ) {
+
       await client.query(
         "ROLLBACK"
       );
@@ -642,12 +754,16 @@ async function processarPedido(
         `Pedido ${orderId} já contado.`
       );
 
-      return;
+      return {
+        processed: false,
+        reason:
+          "already_processed"
+      };
     }
 
     /*
     |--------------------------------------------------------------------------
-    | GARANTIR LOTE
+    | BUSCAR LOTE
     |--------------------------------------------------------------------------
     */
 
@@ -664,6 +780,7 @@ async function processarPedido(
             AND active = TRUE
 
           ORDER BY id DESC
+
           LIMIT 1
         `,
         [
@@ -672,9 +789,16 @@ async function processarPedido(
         ]
       );
 
+    /*
+    |--------------------------------------------------------------------------
+    | CRIAR LOTE SE NECESSÁRIO
+    |--------------------------------------------------------------------------
+    */
+
     if (
       loteResult.rows.length === 0
     ) {
+
       loteResult =
         await client.query(
           `
@@ -727,7 +851,8 @@ async function processarPedido(
                 target_quantity
               ),
 
-            updated_at = NOW()
+            updated_at =
+              NOW()
 
           WHERE id = $2
 
@@ -746,12 +871,16 @@ async function processarPedido(
     );
 
     const current =
-      updated.rows[0]
-        .current_quantity;
+      Number(
+        updated.rows[0]
+          .current_quantity
+      );
 
     const target =
-      updated.rows[0]
-        .target_quantity;
+      Number(
+        updated.rows[0]
+          .target_quantity
+      );
 
     console.log(
       `Pedido ${orderId}: +${quantity} peça(s).`
@@ -761,16 +890,27 @@ async function processarPedido(
       `Lote STAGE 72: ${current}/${target}`
     );
 
+    return {
+      processed: true,
+      quantity,
+      current,
+      target
+    };
+
   } catch (error) {
+
     try {
+
       await client.query(
         "ROLLBACK"
       );
+
     } catch (_) {}
 
     throw error;
 
   } finally {
+
     client.release();
   }
 }
@@ -781,29 +921,48 @@ async function processarPedido(
 |--------------------------------------------------------------------------
 */
 
-app.get("/", (req, res) => {
-  res.send(`
-    <html>
-      <body style="
-        margin:0;
-        background:#070707;
-        color:#63ddff;
-        font-family:Arial,sans-serif;
-        display:flex;
-        align-items:center;
-        justify-content:center;
-        min-height:100vh;
-      ">
+app.get(
+  "/",
+  (req, res) => {
 
-        <div style="text-align:center;">
-          <h1>STAGE 72</h1>
-          <p>Backend online.</p>
-        </div>
+    res.send(`
+      <html>
 
-      </body>
-    </html>
-  `);
-});
+        <body style="
+          margin:0;
+          background:#070707;
+          color:#63ddff;
+          font-family:Arial,sans-serif;
+          display:flex;
+          align-items:center;
+          justify-content:center;
+          min-height:100vh;
+        ">
+
+          <div style="
+            text-align:center;
+          ">
+
+            <h1>
+              STAGE 72
+            </h1>
+
+            <p>
+              Backend online.
+            </p>
+
+            <p>
+              CORS ativo.
+            </p>
+
+          </div>
+
+        </body>
+
+      </html>
+    `);
+  }
+);
 
 /*
 |--------------------------------------------------------------------------
@@ -814,40 +973,82 @@ app.get("/", (req, res) => {
 app.get(
   "/health",
   async (req, res) => {
+
     try {
+
       await pool.query(
         "SELECT 1"
       );
 
-      res.json({
+      return res.json({
         ok: true,
+
         service:
           "stage72-contador",
-        database: true
+
+        database: true,
+
+        cors: true
       });
 
     } catch (error) {
-      res.status(500).json({
-        ok: false,
-        database: false
-      });
+
+      return res
+        .status(500)
+        .json({
+          ok: false,
+          database: false
+        });
     }
   }
 );
 
 /*
 |--------------------------------------------------------------------------
-| OAUTH
+| TESTE CORS
+|--------------------------------------------------------------------------
+| Essa rota serve para confirmar que o Render recebeu esta versão.
+|--------------------------------------------------------------------------
+*/
+
+app.get(
+  "/api/cors-test",
+  (req, res) => {
+
+    res.setHeader(
+      "Access-Control-Allow-Origin",
+      "*"
+    );
+
+    res.setHeader(
+      "Cache-Control",
+      "no-store"
+    );
+
+    return res.json({
+      ok: true,
+      cors: true,
+      message:
+        "CORS STAGE 72 ativo"
+    });
+  }
+);
+
+/*
+|--------------------------------------------------------------------------
+| OAUTH NUVEMSHOP
 |--------------------------------------------------------------------------
 */
 
 app.get(
   "/auth/callback",
   async (req, res) => {
+
     const code =
       req.query.code;
 
     if (!code) {
+
       return res
         .status(400)
         .send(
@@ -859,14 +1060,24 @@ app.get(
       !CLIENT_ID ||
       !CLIENT_SECRET
     ) {
+
+      console.error(
+        "Credenciais da Nuvemshop não configuradas."
+      );
+
       return res
         .status(500)
         .send(
-          "Credenciais não configuradas."
+          "Credenciais da integração não configuradas."
         );
     }
 
     try {
+
+      console.log(
+        "Código OAuth recebido."
+      );
+
       const response =
         await fetch(
           "https://www.tiendanube.com/apps/authorize/token",
@@ -889,7 +1100,8 @@ app.get(
                 grant_type:
                   "authorization_code",
 
-                code
+                code:
+                  code
               })
           }
         );
@@ -901,6 +1113,7 @@ app.get(
         !response.ok ||
         data.error
       ) {
+
         console.error(
           "Erro OAuth:",
           data.error
@@ -913,9 +1126,29 @@ app.get(
 
         return res
           .status(500)
-          .send(
-            "Falha na autorização."
-          );
+          .send(`
+            <html>
+
+              <body style="
+                background:#070707;
+                color:#ff6666;
+                font-family:Arial,sans-serif;
+                text-align:center;
+                padding-top:100px;
+              ">
+
+                <h1>
+                  STAGE 72
+                </h1>
+
+                <p>
+                  Não foi possível concluir a autorização.
+                </p>
+
+              </body>
+
+            </html>
+          `);
       }
 
       const storeId =
@@ -927,6 +1160,11 @@ app.get(
         !storeId ||
         !data.access_token
       ) {
+
+        console.error(
+          "Dados OAuth incompletos."
+        );
+
         return res
           .status(500)
           .send(
@@ -935,7 +1173,7 @@ app.get(
       }
 
       /*
-      Salvar autorização.
+      Salvar loja/token.
       */
 
       await pool.query(
@@ -967,9 +1205,17 @@ app.get(
         ]
       );
 
+      /*
+      Garantir lote.
+      */
+
       await garantirLote(
         storeId
       );
+
+      /*
+      Garantir webhooks.
+      */
 
       const webhooks =
         await configurarWebhooks(
@@ -978,11 +1224,11 @@ app.get(
         );
 
       console.log(
-        "Nuvemshop conectada."
+        "Nuvemshop conectada com sucesso."
       );
 
       console.log(
-        "Store ID:",
+        "Store ID identificado:",
         storeId
       );
 
@@ -993,6 +1239,7 @@ app.get(
 
       return res.send(`
         <html>
+
           <body style="
             margin:0;
             background:#070707;
@@ -1004,9 +1251,13 @@ app.get(
             min-height:100vh;
           ">
 
-            <div style="text-align:center;">
+            <div style="
+              text-align:center;
+            ">
 
-              <h1>STAGE 72</h1>
+              <h1>
+                STAGE 72
+              </h1>
 
               <h2>
                 LOJA CONECTADA
@@ -1020,13 +1271,20 @@ app.get(
                 Webhooks configurados.
               </p>
 
+              <p>
+                Store ID:
+                ${storeId}
+              </p>
+
             </div>
 
           </body>
+
         </html>
       `);
 
     } catch (error) {
+
       console.error(
         "Erro OAuth:",
         error.message
@@ -1043,15 +1301,16 @@ app.get(
 
 /*
 |--------------------------------------------------------------------------
-| WEBHOOK
+| WEBHOOK PEDIDOS
 |--------------------------------------------------------------------------
 */
 
 app.post(
   "/webhooks/orders",
   (req, res) => {
+
     /*
-    Responde imediatamente à Nuvemshop.
+    Responde imediatamente.
     */
 
     res.sendStatus(200);
@@ -1085,6 +1344,7 @@ app.post(
       !storeId ||
       !orderId
     ) {
+
       console.error(
         "Webhook sem store_id ou id."
       );
@@ -1105,6 +1365,7 @@ app.post(
       orderId
     ).catch(
       (error) => {
+
         console.error(
           "Erro processamento webhook:",
           error.message
@@ -1116,25 +1377,23 @@ app.post(
 
 /*
 |--------------------------------------------------------------------------
-| REPROCESSAR PEDIDO DE TESTE
-|--------------------------------------------------------------------------
-|
-| Criamos esta rota para reaproveitar
-| a venda que você já fez.
-|
+| REPROCESSAR PEDIDO
 |--------------------------------------------------------------------------
 */
 
 app.get(
   "/api/reprocess-order/:orderId",
   async (req, res) => {
+
     try {
+
       const orderId =
         Number(
           req.params.orderId
         );
 
       if (!orderId) {
+
         return res
           .status(400)
           .json({
@@ -1160,6 +1419,7 @@ app.get(
       if (
         storeResult.rows.length === 0
       ) {
+
         return res
           .status(404)
           .json({
@@ -1175,20 +1435,21 @@ app.get(
             .store_id
         );
 
-      await processarPedido(
-        storeId,
-        orderId
-      );
+      const result =
+        await processarPedido(
+          storeId,
+          orderId
+        );
 
       return res.json({
         ok: true,
         storeId,
         orderId,
-        message:
-          "Pedido processado."
+        result
       });
 
     } catch (error) {
+
       console.error(
         "Erro reprocessamento:",
         error.message
@@ -1214,7 +1475,9 @@ app.get(
 app.get(
   "/api/setup-webhooks",
   async (req, res) => {
+
     try {
+
       const stores =
         await pool.query(`
           SELECT
@@ -1230,6 +1493,7 @@ app.get(
       if (
         stores.rows.length === 0
       ) {
+
         return res
           .status(404)
           .json({
@@ -1245,6 +1509,7 @@ app.get(
         const store
         of stores.rows
       ) {
+
         const storeId =
           Number(
             store.store_id
@@ -1262,18 +1527,22 @@ app.get(
 
         results.push({
           storeId,
-          webhooks: result
+          webhooks:
+            result
         });
       }
 
       return res.json({
         ok: true,
+
         webhookUrl:
           WEBHOOK_URL,
+
         results
       });
 
     } catch (error) {
+
       console.error(
         "Erro setup-webhooks:",
         error.message
@@ -1299,7 +1568,38 @@ app.get(
 app.get(
   "/api/lote",
   async (req, res) => {
+
     try {
+
+      /*
+      CORS explícito também nesta rota.
+      */
+
+      res.setHeader(
+        "Access-Control-Allow-Origin",
+        "*"
+      );
+
+      /*
+      Não deixa navegador/CDN guardar
+      valor antigo do contador.
+      */
+
+      res.setHeader(
+        "Cache-Control",
+        "no-store, no-cache, must-revalidate, proxy-revalidate"
+      );
+
+      res.setHeader(
+        "Pragma",
+        "no-cache"
+      );
+
+      res.setHeader(
+        "Expires",
+        "0"
+      );
+
       const result =
         await pool.query(
           `
@@ -1322,12 +1622,15 @@ app.get(
 
             LIMIT 1
           `,
-          [PRODUCT_ID]
+          [
+            PRODUCT_ID
+          ]
         );
 
       if (
         result.rows.length === 0
       ) {
+
         return res
           .status(404)
           .json({
@@ -1385,8 +1688,11 @@ app.get(
           lote.nome,
 
         current,
+
         target,
+
         remaining,
+
         percentage,
 
         closed:
@@ -1394,6 +1700,7 @@ app.get(
       });
 
     } catch (error) {
+
       console.error(
         "Erro lote:",
         error.message
@@ -1419,7 +1726,9 @@ app.get(
 app.get(
   "/api/status",
   async (req, res) => {
+
     try {
+
       const result =
         await pool.query(`
           SELECT
@@ -1449,14 +1758,19 @@ app.get(
           PRODUCT_ID,
 
         target:
-          TARGET
+          TARGET,
+
+        cors: true
       });
 
     } catch (error) {
+
       return res
         .status(500)
         .json({
-          ok: false
+          ok: false,
+          error:
+            error.message
         });
     }
   }
@@ -1471,6 +1785,7 @@ app.get(
 app.post(
   "/webhooks/lgpd/store-redact",
   (req, res) => {
+
     res.sendStatus(200);
   }
 );
@@ -1478,6 +1793,7 @@ app.post(
 app.post(
   "/webhooks/lgpd/customers-redact",
   (req, res) => {
+
     res.sendStatus(200);
   }
 );
@@ -1485,6 +1801,7 @@ app.post(
 app.post(
   "/webhooks/lgpd/customers-data-request",
   (req, res) => {
+
     res.sendStatus(200);
   }
 );
@@ -1499,6 +1816,7 @@ app.listen(
   PORT,
   "0.0.0.0",
   async () => {
+
     console.log(
       `STAGE 72 rodando na porta ${PORT}`
     );
