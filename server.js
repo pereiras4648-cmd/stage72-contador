@@ -12,6 +12,25 @@ const DATABASE_URL = process.env.DATABASE_URL;
 
 /*
 |--------------------------------------------------------------------------
+| STAGE 72
+|--------------------------------------------------------------------------
+*/
+
+const PRODUCT_ID = 362509901;
+const TARGET = 10;
+
+const API_BASE = "https://api.nuvemshop.com.br/v1";
+
+const WEBHOOK_URL =
+  "https://stage72-contador.onrender.com/webhooks/orders";
+
+const WEBHOOK_EVENTS = [
+  "order/created",
+  "order/updated"
+];
+
+/*
+|--------------------------------------------------------------------------
 | POSTGRESQL
 |--------------------------------------------------------------------------
 */
@@ -24,12 +43,13 @@ const pool = new Pool({
       : { rejectUnauthorized: false }
 });
 
-async function prepararBanco() {
-  if (!DATABASE_URL) {
-    console.error("DATABASE_URL não configurada.");
-    return;
-  }
+/*
+|--------------------------------------------------------------------------
+| PREPARAR BANCO
+|--------------------------------------------------------------------------
+*/
 
+async function prepararBanco() {
   try {
     await pool.query(`
       CREATE TABLE IF NOT EXISTS nuvemshop_stores (
@@ -43,6 +63,8 @@ async function prepararBanco() {
     await pool.query(`
       CREATE TABLE IF NOT EXISTS lotes (
         id SERIAL PRIMARY KEY,
+        store_id BIGINT,
+        product_id BIGINT,
         nome TEXT NOT NULL,
         current_quantity INTEGER NOT NULL DEFAULT 0,
         target_quantity INTEGER NOT NULL DEFAULT 10,
@@ -52,41 +74,29 @@ async function prepararBanco() {
       )
     `);
 
+    /*
+    Compatibilidade com a tabela criada anteriormente.
+    */
+
+    await pool.query(`
+      ALTER TABLE lotes
+      ADD COLUMN IF NOT EXISTS store_id BIGINT
+    `);
+
+    await pool.query(`
+      ALTER TABLE lotes
+      ADD COLUMN IF NOT EXISTS product_id BIGINT
+    `);
+
     await pool.query(`
       CREATE TABLE IF NOT EXISTS pedidos_processados (
         order_id BIGINT PRIMARY KEY,
         store_id BIGINT,
+        product_id BIGINT,
         quantity INTEGER NOT NULL DEFAULT 0,
         processed_at TIMESTAMPTZ DEFAULT NOW()
       )
     `);
-
-    const loteExistente = await pool.query(`
-      SELECT id
-      FROM lotes
-      WHERE active = TRUE
-      ORDER BY id DESC
-      LIMIT 1
-    `);
-
-    if (loteExistente.rows.length === 0) {
-      await pool.query(`
-        INSERT INTO lotes (
-          nome,
-          current_quantity,
-          target_quantity,
-          active
-        )
-        VALUES (
-          'STAGE 72',
-          0,
-          10,
-          TRUE
-        )
-      `);
-
-      console.log("Lote inicial criado: 0/10.");
-    }
 
     console.log("PostgreSQL conectado.");
     console.log("Tabelas prontas.");
@@ -100,17 +110,625 @@ async function prepararBanco() {
 
 /*
 |--------------------------------------------------------------------------
-| PÁGINA INICIAL
+| HEADERS NUVEMSHOP
+|--------------------------------------------------------------------------
+*/
+
+function apiHeaders(accessToken) {
+  return {
+    Authorization: `Bearer ${accessToken}`,
+    "User-Agent": `STAGE 72 (${CLIENT_ID})`,
+    "Content-Type": "application/json"
+  };
+}
+
+/*
+|--------------------------------------------------------------------------
+| BUSCAR LOJA
+|--------------------------------------------------------------------------
+*/
+
+async function buscarLoja(storeId) {
+  const result = await pool.query(
+    `
+      SELECT
+        store_id,
+        access_token
+      FROM nuvemshop_stores
+      WHERE store_id = $1
+      LIMIT 1
+    `,
+    [storeId]
+  );
+
+  return result.rows[0] || null;
+}
+
+/*
+|--------------------------------------------------------------------------
+| GARANTIR LOTE
+|--------------------------------------------------------------------------
+*/
+
+async function garantirLote(storeId) {
+  const existing = await pool.query(
+    `
+      SELECT *
+      FROM lotes
+
+      WHERE
+        store_id = $1
+        AND product_id = $2
+        AND active = TRUE
+
+      ORDER BY id DESC
+      LIMIT 1
+    `,
+    [
+      storeId,
+      PRODUCT_ID
+    ]
+  );
+
+  if (existing.rows.length > 0) {
+    return existing.rows[0];
+  }
+
+  const created = await pool.query(
+    `
+      INSERT INTO lotes (
+        store_id,
+        product_id,
+        nome,
+        current_quantity,
+        target_quantity,
+        active
+      )
+
+      VALUES (
+        $1,
+        $2,
+        'STAGE 72',
+        0,
+        $3,
+        TRUE
+      )
+
+      RETURNING *
+    `,
+    [
+      storeId,
+      PRODUCT_ID,
+      TARGET
+    ]
+  );
+
+  console.log(
+    `Lote criado: produto ${PRODUCT_ID} - 0/${TARGET}`
+  );
+
+  return created.rows[0];
+}
+
+/*
+|--------------------------------------------------------------------------
+| LISTAR WEBHOOKS
+|--------------------------------------------------------------------------
+*/
+
+async function listarWebhooks(
+  storeId,
+  accessToken
+) {
+  const response = await fetch(
+    `${API_BASE}/${storeId}/webhooks`,
+    {
+      method: "GET",
+      headers: apiHeaders(accessToken)
+    }
+  );
+
+  const text = await response.text();
+
+  if (!response.ok) {
+    throw new Error(
+      `Erro listando webhooks: ${response.status} ${text}`
+    );
+  }
+
+  if (!text) {
+    return [];
+  }
+
+  return JSON.parse(text);
+}
+
+/*
+|--------------------------------------------------------------------------
+| CRIAR WEBHOOK
+|--------------------------------------------------------------------------
+*/
+
+async function criarWebhook(
+  storeId,
+  accessToken,
+  event
+) {
+  const response = await fetch(
+    `${API_BASE}/${storeId}/webhooks`,
+    {
+      method: "POST",
+
+      headers: apiHeaders(
+        accessToken
+      ),
+
+      body: JSON.stringify({
+        event: event,
+        url: WEBHOOK_URL
+      })
+    }
+  );
+
+  const text = await response.text();
+
+  if (!response.ok) {
+    throw new Error(
+      `Erro criando ${event}: ${response.status} ${text}`
+    );
+  }
+
+  console.log(
+    `Webhook ${event} criado.`
+  );
+
+  return true;
+}
+
+/*
+|--------------------------------------------------------------------------
+| CONFIGURAR WEBHOOKS
+|--------------------------------------------------------------------------
+*/
+
+async function configurarWebhooks(
+  storeId,
+  accessToken
+) {
+  const webhooks =
+    await listarWebhooks(
+      storeId,
+      accessToken
+    );
+
+  const results = [];
+
+  for (const event of WEBHOOK_EVENTS) {
+    const exists =
+      Array.isArray(webhooks) &&
+      webhooks.some(
+        (webhook) =>
+          webhook.event === event &&
+          webhook.url === WEBHOOK_URL
+      );
+
+    if (exists) {
+      console.log(
+        `Webhook ${event} já existe.`
+      );
+
+      results.push({
+        event,
+        status: "already_exists"
+      });
+
+      continue;
+    }
+
+    await criarWebhook(
+      storeId,
+      accessToken,
+      event
+    );
+
+    results.push({
+      event,
+      status: "created"
+    });
+  }
+
+  return results;
+}
+
+/*
+|--------------------------------------------------------------------------
+| BUSCAR PEDIDO
+|--------------------------------------------------------------------------
+*/
+
+async function buscarPedido(
+  storeId,
+  accessToken,
+  orderId
+) {
+  const response = await fetch(
+    `${API_BASE}/${storeId}/orders/${orderId}`,
+    {
+      method: "GET",
+
+      headers:
+        apiHeaders(accessToken)
+    }
+  );
+
+  const text =
+    await response.text();
+
+  if (!response.ok) {
+    throw new Error(
+      `Erro buscando pedido ${orderId}: ${response.status} ${text}`
+    );
+  }
+
+  return JSON.parse(text);
+}
+
+/*
+|--------------------------------------------------------------------------
+| PROCESSAR PEDIDO
+|--------------------------------------------------------------------------
+*/
+
+async function processarPedido(
+  storeId,
+  orderId
+) {
+  /*
+  |--------------------------------------------------------------------------
+  | JÁ PROCESSADO?
+  |--------------------------------------------------------------------------
+  */
+
+  const processed =
+    await pool.query(
+      `
+        SELECT order_id
+        FROM pedidos_processados
+        WHERE order_id = $1
+        LIMIT 1
+      `,
+      [orderId]
+    );
+
+  if (
+    processed.rows.length > 0
+  ) {
+    console.log(
+      `Pedido ${orderId} já processado.`
+    );
+
+    return;
+  }
+
+  /*
+  |--------------------------------------------------------------------------
+  | TOKEN DA LOJA
+  |--------------------------------------------------------------------------
+  */
+
+  const store =
+    await buscarLoja(storeId);
+
+  if (!store) {
+    throw new Error(
+      `Loja ${storeId} não autorizada.`
+    );
+  }
+
+  /*
+  |--------------------------------------------------------------------------
+  | BUSCAR PEDIDO REAL
+  |--------------------------------------------------------------------------
+  */
+
+  const order =
+    await buscarPedido(
+      storeId,
+      store.access_token,
+      orderId
+    );
+
+  console.log(
+    `Pedido ${orderId} status de pagamento:`,
+    order.payment_status
+  );
+
+  /*
+  |--------------------------------------------------------------------------
+  | SOMENTE PAGO
+  |--------------------------------------------------------------------------
+  */
+
+  if (
+    order.payment_status !== "paid"
+  ) {
+    console.log(
+      `Pedido ${orderId} ainda não está pago.`
+    );
+
+    return;
+  }
+
+  /*
+  |--------------------------------------------------------------------------
+  | PRODUTOS
+  |--------------------------------------------------------------------------
+  */
+
+  const products =
+    Array.isArray(order.products)
+      ? order.products
+      : [];
+
+  /*
+  Todas as variantes 38/40/42/44/46/48
+  pertencem ao mesmo PRODUCT_ID.
+
+  Então somamos pela quantidade do produto,
+  independentemente do variant_id.
+  */
+
+  const quantity =
+    products
+      .filter(
+        (item) =>
+          Number(item.product_id) ===
+          PRODUCT_ID
+      )
+      .reduce(
+        (total, item) =>
+          total +
+          Number(
+            item.quantity || 0
+          ),
+        0
+      );
+
+  /*
+  |--------------------------------------------------------------------------
+  | NÃO É O PRODUTO DO LOTE
+  |--------------------------------------------------------------------------
+  */
+
+  if (quantity <= 0) {
+    console.log(
+      `Pedido ${orderId} não contém produto ${PRODUCT_ID}.`
+    );
+
+    await pool.query(
+      `
+        INSERT INTO pedidos_processados (
+          order_id,
+          store_id,
+          product_id,
+          quantity
+        )
+
+        VALUES (
+          $1,
+          $2,
+          $3,
+          0
+        )
+
+        ON CONFLICT (order_id)
+        DO NOTHING
+      `,
+      [
+        orderId,
+        storeId,
+        PRODUCT_ID
+      ]
+    );
+
+    return;
+  }
+
+  /*
+  |--------------------------------------------------------------------------
+  | TRANSAÇÃO
+  |--------------------------------------------------------------------------
+  */
+
+  const client =
+    await pool.connect();
+
+  try {
+    await client.query("BEGIN");
+
+    /*
+    Garante idempotência.
+    */
+
+    const inserted =
+      await client.query(
+        `
+          INSERT INTO pedidos_processados (
+            order_id,
+            store_id,
+            product_id,
+            quantity
+          )
+
+          VALUES (
+            $1,
+            $2,
+            $3,
+            $4
+          )
+
+          ON CONFLICT (order_id)
+          DO NOTHING
+
+          RETURNING order_id
+        `,
+        [
+          orderId,
+          storeId,
+          PRODUCT_ID,
+          quantity
+        ]
+      );
+
+    if (
+      inserted.rows.length === 0
+    ) {
+      await client.query(
+        "ROLLBACK"
+      );
+
+      console.log(
+        `Pedido ${orderId} já contado.`
+      );
+
+      return;
+    }
+
+    /*
+    Garante o lote.
+    */
+
+    let loteResult =
+      await client.query(
+        `
+          SELECT id
+
+          FROM lotes
+
+          WHERE
+            store_id = $1
+            AND product_id = $2
+            AND active = TRUE
+
+          ORDER BY id DESC
+          LIMIT 1
+        `,
+        [
+          storeId,
+          PRODUCT_ID
+        ]
+      );
+
+    if (
+      loteResult.rows.length === 0
+    ) {
+      loteResult =
+        await client.query(
+          `
+            INSERT INTO lotes (
+              store_id,
+              product_id,
+              nome,
+              current_quantity,
+              target_quantity,
+              active
+            )
+
+            VALUES (
+              $1,
+              $2,
+              'STAGE 72',
+              0,
+              $3,
+              TRUE
+            )
+
+            RETURNING id
+          `,
+          [
+            storeId,
+            PRODUCT_ID,
+            TARGET
+          ]
+        );
+    }
+
+    const loteId =
+      loteResult.rows[0].id;
+
+    /*
+    Atualiza o contador.
+    */
+
+    const updated =
+      await client.query(
+        `
+          UPDATE lotes
+
+          SET
+            current_quantity =
+              LEAST(
+                current_quantity + $1,
+                target_quantity
+              ),
+
+            updated_at = NOW()
+
+          WHERE id = $2
+
+          RETURNING
+            current_quantity,
+            target_quantity
+        `,
+        [
+          quantity,
+          loteId
+        ]
+      );
+
+    await client.query(
+      "COMMIT"
+    );
+
+    const current =
+      updated.rows[0]
+        .current_quantity;
+
+    const target =
+      updated.rows[0]
+        .target_quantity;
+
+    console.log(
+      `Pedido ${orderId}: +${quantity} peça(s).`
+    );
+
+    console.log(
+      `Lote STAGE 72: ${current}/${target}`
+    );
+
+  } catch (error) {
+    try {
+      await client.query(
+        "ROLLBACK"
+      );
+    } catch (_) {}
+
+    throw error;
+
+  } finally {
+    client.release();
+  }
+}
+
+/*
+|--------------------------------------------------------------------------
+| HOME
 |--------------------------------------------------------------------------
 */
 
 app.get("/", (req, res) => {
-  res.status(200).send(`
+  res.send(`
     <html>
-      <head>
-        <title>STAGE 72</title>
-      </head>
-
       <body style="
         margin:0;
         background:#070707;
@@ -134,122 +752,196 @@ app.get("/", (req, res) => {
 
 /*
 |--------------------------------------------------------------------------
-| HEALTH CHECK
+| HEALTH
 |--------------------------------------------------------------------------
 */
 
-app.get("/health", async (req, res) => {
-  try {
-    await pool.query("SELECT 1");
+app.get(
+  "/health",
+  async (req, res) => {
+    try {
+      await pool.query(
+        "SELECT 1"
+      );
 
-    res.json({
-      ok: true,
-      service: "stage72-contador",
-      database: true
-    });
-  } catch (error) {
-    res.status(500).json({
-      ok: false,
-      service: "stage72-contador",
-      database: false
-    });
+      res.json({
+        ok: true,
+        service:
+          "stage72-contador",
+        database: true
+      });
+
+    } catch (error) {
+      res.status(500).json({
+        ok: false,
+        database: false
+      });
+    }
   }
-});
+);
 
 /*
 |--------------------------------------------------------------------------
-| OAUTH NUVEMSHOP
+| OAUTH
 |--------------------------------------------------------------------------
 */
 
-app.get("/auth/callback", async (req, res) => {
-  const code = req.query.code;
+app.get(
+  "/auth/callback",
+  async (req, res) => {
+    const code =
+      req.query.code;
 
-  console.log("Callback OAuth recebido.");
+    if (!code) {
+      return res
+        .status(400)
+        .send(
+          "Código de autorização não recebido."
+        );
+    }
 
-  if (req.query.error) {
-    console.error(
-      "Erro recebido no callback:",
-      req.query.error
-    );
+    if (
+      !CLIENT_ID ||
+      !CLIENT_SECRET
+    ) {
+      return res
+        .status(500)
+        .send(
+          "Credenciais não configuradas."
+        );
+    }
 
-    console.error(
-      "Descrição do callback:",
-      req.query.error_description || "sem descrição"
-    );
+    try {
+      const response =
+        await fetch(
+          "https://www.tiendanube.com/apps/authorize/token",
+          {
+            method: "POST",
 
-    return res.status(400).send(
-      "A Nuvemshop não autorizou a conexão."
-    );
-  }
+            headers: {
+              "Content-Type":
+                "application/json"
+            },
 
-  if (!code) {
-    return res.status(400).send(
-      "Código de autorização não recebido."
-    );
-  }
+            body:
+              JSON.stringify({
+                client_id:
+                  CLIENT_ID,
 
-  if (!CLIENT_ID || !CLIENT_SECRET) {
-    console.error(
-      "Credenciais da Nuvemshop não configuradas."
-    );
+                client_secret:
+                  CLIENT_SECRET,
 
-    return res.status(500).send(
-      "Credenciais da integração não configuradas."
-    );
-  }
+                grant_type:
+                  "authorization_code",
 
-  try {
-    console.log("Código OAuth recebido.");
-    console.log("Solicitando access token...");
+                code
+              })
+          }
+        );
 
-    const response = await fetch(
-      "https://www.tiendanube.com/apps/authorize/token",
-      {
-        method: "POST",
+      const data =
+        await response.json();
 
-        headers: {
-          "Content-Type": "application/json"
-        },
+      if (
+        !response.ok ||
+        data.error
+      ) {
+        console.error(
+          "Erro OAuth:",
+          data.error
+        );
 
-        body: JSON.stringify({
-          client_id: CLIENT_ID,
-          client_secret: CLIENT_SECRET,
-          grant_type: "authorization_code",
-          code: code
-        })
+        console.error(
+          "Descrição OAuth:",
+          data.error_description
+        );
+
+        return res
+          .status(500)
+          .send(
+            "Falha na autorização."
+          );
       }
-    );
 
-    const data = await response.json();
+      const storeId =
+        Number(
+          data.user_id
+        );
 
-    console.log(
-      "Status HTTP OAuth:",
-      response.status
-    );
+      if (
+        !storeId ||
+        !data.access_token
+      ) {
+        return res
+          .status(500)
+          .send(
+            "Dados OAuth incompletos."
+          );
+      }
 
-    console.log(
-      "Campos retornados pela Nuvemshop:",
-      Object.keys(data)
-    );
+      /*
+      Salva autorização.
+      */
 
-    if (!response.ok || data.error) {
-      console.error(
-        "Erro OAuth:",
-        data.error || "erro_sem_nome"
+      await pool.query(
+        `
+          INSERT INTO nuvemshop_stores (
+            store_id,
+            access_token,
+            updated_at
+          )
+
+          VALUES (
+            $1,
+            $2,
+            NOW()
+          )
+
+          ON CONFLICT (store_id)
+
+          DO UPDATE SET
+            access_token =
+              EXCLUDED.access_token,
+
+            updated_at =
+              NOW()
+        `,
+        [
+          storeId,
+          data.access_token
+        ]
       );
 
-      console.error(
-        "Descrição OAuth:",
-        data.error_description || "sem descrição"
+      await garantirLote(
+        storeId
       );
 
-      return res.status(500).send(`
+      const webhooks =
+        await configurarWebhooks(
+          storeId,
+          data.access_token
+        );
+
+      console.log(
+        "Nuvemshop conectada."
+      );
+
+      console.log(
+        "Store ID:",
+        storeId
+      );
+
+      console.log(
+        "Webhooks:",
+        webhooks
+      );
+
+      return res.send(`
         <html>
           <body style="
             margin:0;
             background:#070707;
-            color:#ff6666;
+            color:#63ddff;
             font-family:Arial,sans-serif;
             display:flex;
             align-items:center;
@@ -258,229 +950,372 @@ app.get("/auth/callback", async (req, res) => {
           ">
 
             <div style="text-align:center;">
+
               <h1>STAGE 72</h1>
-              <h2>FALHA NA AUTORIZAÇÃO</h2>
-              <p>A Nuvemshop retornou um erro.</p>
+
+              <h2>
+                LOJA CONECTADA
+              </h2>
+
+              <p>
+                Integração autorizada.
+              </p>
+
+              <p>
+                Webhooks configurados.
+              </p>
+
             </div>
 
           </body>
         </html>
       `);
-    }
 
-    if (!data.access_token) {
-      return res.status(500).send(
-        "Access token não recebido."
+    } catch (error) {
+      console.error(
+        "Erro OAuth:",
+        error.message
       );
+
+      return res
+        .status(500)
+        .send(
+          "Erro interno."
+        );
     }
-
-    const storeId =
-      data.user_id ??
-      data.store_id ??
-      data.storeId ??
-      null;
-
-    if (!storeId) {
-      return res.status(500).send(
-        "ID da loja não recebido."
-      );
-    }
-
-    await pool.query(
-      `
-        INSERT INTO nuvemshop_stores (
-          store_id,
-          access_token,
-          updated_at
-        )
-        VALUES ($1, $2, NOW())
-
-        ON CONFLICT (store_id)
-
-        DO UPDATE SET
-          access_token = EXCLUDED.access_token,
-          updated_at = NOW()
-      `,
-      [
-        storeId,
-        data.access_token
-      ]
-    );
-
-    console.log(
-      "Nuvemshop conectada com sucesso."
-    );
-
-    console.log(
-      "Store ID:",
-      storeId
-    );
-
-    console.log(
-      "Autorização salva no PostgreSQL."
-    );
-
-    return res.status(200).send(`
-      <html>
-        <head>
-          <title>STAGE 72 - Conectado</title>
-        </head>
-
-        <body style="
-          margin:0;
-          background:#070707;
-          color:#63ddff;
-          font-family:Arial,sans-serif;
-          display:flex;
-          align-items:center;
-          justify-content:center;
-          min-height:100vh;
-        ">
-
-          <div style="text-align:center;">
-
-            <h1>STAGE 72</h1>
-
-            <h2>LOJA CONECTADA</h2>
-
-            <p>
-              A integração com a Nuvemshop foi autorizada.
-            </p>
-
-            <p>
-              A autorização está salva no banco de dados.
-            </p>
-
-          </div>
-
-        </body>
-      </html>
-    `);
-
-  } catch (error) {
-    console.error(
-      "Erro interno durante OAuth:",
-      error.message
-    );
-
-    return res.status(500).send(
-      "Erro interno ao conectar com a Nuvemshop."
-    );
   }
-});
+);
 
 /*
 |--------------------------------------------------------------------------
-| API DO LOTE
+| WEBHOOK
 |--------------------------------------------------------------------------
 */
 
-app.get("/api/lote", async (req, res) => {
-  try {
-    const result = await pool.query(`
-      SELECT
-        id,
-        nome,
-        current_quantity,
-        target_quantity
-      FROM lotes
-      WHERE active = TRUE
-      ORDER BY id DESC
-      LIMIT 1
-    `);
-
-    if (result.rows.length === 0) {
-      return res.status(404).json({
-        ok: false,
-        error: "Nenhum lote ativo."
-      });
-    }
-
-    const lote = result.rows[0];
-
-    const current =
-      Number(lote.current_quantity);
-
-    const target =
-      Number(lote.target_quantity);
-
-    const remaining = Math.max(
-      target - current,
-      0
-    );
-
-    const percentage =
-      target > 0
-        ? Math.min(
-            Math.round(
-              (current / target) * 100
-            ),
-            100
-          )
-        : 0;
-
-    res.json({
-      ok: true,
-      id: lote.id,
-      name: lote.nome,
-      current: current,
-      target: target,
-      remaining: remaining,
-      percentage: percentage,
-      closed: current >= target
-    });
-
-  } catch (error) {
-    console.error(
-      "Erro ao consultar lote:",
-      error.message
-    );
-
-    res.status(500).json({
-      ok: false,
-      error: "Erro ao consultar lote."
-    });
-  }
-});
-
-/*
-|--------------------------------------------------------------------------
-| WEBHOOK DE PEDIDOS
-|--------------------------------------------------------------------------
-|
-| Nesta etapa recebemos e registramos o evento.
-| No próximo passo vamos validar o tipo do evento,
-| buscar o pedido na API e contar somente o produto correto.
-|--------------------------------------------------------------------------
-*/
-
-app.post("/webhooks/orders", async (req, res) => {
-  try {
-    console.log("Webhook de pedido recebido.");
-
-    console.log(
-      "Campos do webhook:",
-      Object.keys(req.body || {})
-    );
-
+app.post(
+  "/webhooks/orders",
+  (req, res) => {
     /*
-    Respondemos rapidamente para a Nuvemshop.
-
-    A lógica definitiva de contabilização será adicionada
-    depois que confirmarmos o formato real do webhook.
+    Responde imediatamente.
     */
 
-    return res.sendStatus(200);
+    res.sendStatus(200);
 
-  } catch (error) {
-    console.error(
-      "Erro no webhook de pedidos:",
-      error.message
+    const payload =
+      req.body || {};
+
+    const storeId =
+      Number(
+        payload.store_id
+      );
+
+    const orderId =
+      Number(
+        payload.id
+      );
+
+    const event =
+      payload.event;
+
+    console.log(
+      "Webhook recebido:",
+      {
+        storeId,
+        orderId,
+        event
+      }
     );
 
-    return res.sendStatus(200);
+    if (
+      !storeId ||
+      !orderId
+    ) {
+      console.error(
+        "Webhook sem store_id ou id."
+      );
+
+      return;
+    }
+
+    if (
+      !WEBHOOK_EVENTS.includes(
+        event
+      )
+    ) {
+      return;
+    }
+
+    processarPedido(
+      storeId,
+      orderId
+    ).catch(
+      (error) => {
+        console.error(
+          "Erro processamento webhook:",
+          error.message
+        );
+      }
+    );
   }
-});
+);
+
+/*
+|--------------------------------------------------------------------------
+| SETUP WEBHOOKS MANUAL
+|--------------------------------------------------------------------------
+|
+| ESSA É A ROTA QUE ESTAVA FALTANDO.
+|--------------------------------------------------------------------------
+*/
+
+app.get(
+  "/api/setup-webhooks",
+  async (req, res) => {
+    try {
+      const stores =
+        await pool.query(`
+          SELECT
+            store_id,
+            access_token
+
+          FROM nuvemshop_stores
+
+          ORDER BY
+            updated_at DESC
+        `);
+
+      if (
+        stores.rows.length === 0
+      ) {
+        return res
+          .status(404)
+          .json({
+            ok: false,
+            error:
+              "Nenhuma loja autorizada."
+          });
+      }
+
+      const results = [];
+
+      for (
+        const store
+        of stores.rows
+      ) {
+        const storeId =
+          Number(
+            store.store_id
+          );
+
+        const result =
+          await configurarWebhooks(
+            storeId,
+            store.access_token
+          );
+
+        await garantirLote(
+          storeId
+        );
+
+        results.push({
+          storeId,
+          webhooks: result
+        });
+      }
+
+      return res.json({
+        ok: true,
+        webhookUrl:
+          WEBHOOK_URL,
+        results
+      });
+
+    } catch (error) {
+      console.error(
+        "Erro setup-webhooks:",
+        error.message
+      );
+
+      return res
+        .status(500)
+        .json({
+          ok: false,
+          error:
+            error.message
+        });
+    }
+  }
+);
+
+/*
+|--------------------------------------------------------------------------
+| API LOTE
+|--------------------------------------------------------------------------
+*/
+
+app.get(
+  "/api/lote",
+  async (req, res) => {
+    try {
+      const result =
+        await pool.query(
+          `
+            SELECT
+              id,
+              store_id,
+              product_id,
+              nome,
+              current_quantity,
+              target_quantity
+
+            FROM lotes
+
+            WHERE
+              product_id = $1
+              AND active = TRUE
+
+            ORDER BY
+              updated_at DESC
+
+            LIMIT 1
+          `,
+          [PRODUCT_ID]
+        );
+
+      if (
+        result.rows.length === 0
+      ) {
+        return res
+          .status(404)
+          .json({
+            ok: false,
+            error:
+              "Lote não configurado."
+          });
+      }
+
+      const lote =
+        result.rows[0];
+
+      const current =
+        Number(
+          lote.current_quantity
+        );
+
+      const target =
+        Number(
+          lote.target_quantity
+        );
+
+      const remaining =
+        Math.max(
+          target - current,
+          0
+        );
+
+      const percentage =
+        target > 0
+          ? Math.min(
+              Math.round(
+                (
+                  current /
+                  target
+                ) * 100
+              ),
+              100
+            )
+          : 0;
+
+      return res.json({
+        ok: true,
+
+        id:
+          lote.id,
+
+        storeId:
+          lote.store_id,
+
+        productId:
+          lote.product_id,
+
+        name:
+          lote.nome,
+
+        current,
+        target,
+        remaining,
+        percentage,
+
+        closed:
+          current >= target
+      });
+
+    } catch (error) {
+      console.error(
+        "Erro lote:",
+        error.message
+      );
+
+      return res
+        .status(500)
+        .json({
+          ok: false
+        });
+    }
+  }
+);
+
+/*
+|--------------------------------------------------------------------------
+| STATUS
+|--------------------------------------------------------------------------
+*/
+
+app.get(
+  "/api/status",
+  async (req, res) => {
+    try {
+      const result =
+        await pool.query(`
+          SELECT
+            store_id,
+            updated_at
+
+          FROM nuvemshop_stores
+
+          ORDER BY
+            updated_at DESC
+
+          LIMIT 1
+        `);
+
+      return res.json({
+        ok: true,
+
+        nuvemshopConnected:
+          result.rows.length > 0,
+
+        storeId:
+          result.rows[0]
+            ?.store_id ??
+          null,
+
+        productId:
+          PRODUCT_ID,
+
+        target:
+          TARGET
+      });
+
+    } catch (error) {
+      return res
+        .status(500)
+        .json({
+          ok: false
+        });
+    }
+  }
+);
 
 /*
 |--------------------------------------------------------------------------
@@ -491,10 +1326,6 @@ app.post("/webhooks/orders", async (req, res) => {
 app.post(
   "/webhooks/lgpd/store-redact",
   (req, res) => {
-    console.log(
-      "LGPD store redact recebido."
-    );
-
     res.sendStatus(200);
   }
 );
@@ -502,10 +1333,6 @@ app.post(
 app.post(
   "/webhooks/lgpd/customers-redact",
   (req, res) => {
-    console.log(
-      "LGPD customers redact recebido."
-    );
-
     res.sendStatus(200);
   }
 );
@@ -513,57 +1340,9 @@ app.post(
 app.post(
   "/webhooks/lgpd/customers-data-request",
   (req, res) => {
-    console.log(
-      "LGPD customers data request recebido."
-    );
-
     res.sendStatus(200);
   }
 );
-
-/*
-|--------------------------------------------------------------------------
-| STATUS DA INTEGRAÇÃO
-|--------------------------------------------------------------------------
-*/
-
-app.get("/api/status", async (req, res) => {
-  try {
-    const result = await pool.query(`
-      SELECT
-        store_id,
-        updated_at
-      FROM nuvemshop_stores
-      ORDER BY updated_at DESC
-      LIMIT 1
-    `);
-
-    if (result.rows.length === 0) {
-      return res.json({
-        ok: true,
-        nuvemshopConnected: false,
-        storeId: null
-      });
-    }
-
-    res.json({
-      ok: true,
-      nuvemshopConnected: true,
-      storeId: result.rows[0].store_id
-    });
-
-  } catch (error) {
-    console.error(
-      "Erro ao consultar status:",
-      error.message
-    );
-
-    res.status(500).json({
-      ok: false,
-      database: false
-    });
-  }
-});
 
 /*
 |--------------------------------------------------------------------------
