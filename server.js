@@ -1,4 +1,5 @@
 const express = require("express");
+const { Pool } = require("pg");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -7,6 +8,47 @@ app.use(express.json());
 
 const CLIENT_ID = process.env.NUVEMSHOP_CLIENT_ID;
 const CLIENT_SECRET = process.env.NUVEMSHOP_CLIENT_SECRET;
+const DATABASE_URL = process.env.DATABASE_URL;
+
+/*
+|--------------------------------------------------------------------------
+| POSTGRESQL
+|--------------------------------------------------------------------------
+*/
+
+const pool = new Pool({
+  connectionString: DATABASE_URL,
+  ssl:
+    DATABASE_URL && DATABASE_URL.includes("localhost")
+      ? false
+      : { rejectUnauthorized: false }
+});
+
+async function prepararBanco() {
+  if (!DATABASE_URL) {
+    console.error("DATABASE_URL não configurada.");
+    return;
+  }
+
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS nuvemshop_stores (
+        store_id BIGINT PRIMARY KEY,
+        access_token TEXT NOT NULL,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+
+    console.log("PostgreSQL conectado.");
+    console.log("Tabela nuvemshop_stores pronta.");
+  } catch (error) {
+    console.error(
+      "Erro ao preparar PostgreSQL:",
+      error.message
+    );
+  }
+}
 
 /*
 |--------------------------------------------------------------------------
@@ -45,11 +87,22 @@ app.get("/", (req, res) => {
 |--------------------------------------------------------------------------
 */
 
-app.get("/health", (req, res) => {
-  res.json({
-    ok: true,
-    service: "stage72-contador"
-  });
+app.get("/health", async (req, res) => {
+  try {
+    await pool.query("SELECT 1");
+
+    res.json({
+      ok: true,
+      service: "stage72-contador",
+      database: true
+    });
+  } catch (error) {
+    res.status(500).json({
+      ok: false,
+      service: "stage72-contador",
+      database: false
+    });
+  }
 });
 
 /*
@@ -63,12 +116,6 @@ app.get("/auth/callback", async (req, res) => {
 
   console.log("Callback OAuth recebido.");
 
-  /*
-  |--------------------------------------------------------------------------
-  | VERIFICA ERRO RECEBIDO NO CALLBACK
-  |--------------------------------------------------------------------------
-  */
-
   if (req.query.error) {
     console.error(
       "Erro recebido no callback:",
@@ -80,111 +127,30 @@ app.get("/auth/callback", async (req, res) => {
       req.query.error_description || "sem descrição"
     );
 
-    return res.status(400).send(`
-      <html>
-        <body style="
-          margin:0;
-          background:#070707;
-          color:#ff6666;
-          font-family:Arial,sans-serif;
-          display:flex;
-          align-items:center;
-          justify-content:center;
-          min-height:100vh;
-        ">
-          <div style="text-align:center;">
-            <h1>STAGE 72</h1>
-            <h2>ERRO DE AUTORIZAÇÃO</h2>
-            <p>A Nuvemshop não autorizou a conexão.</p>
-          </div>
-        </body>
-      </html>
-    `);
+    return res.status(400).send(
+      "A Nuvemshop não autorizou a conexão."
+    );
   }
-
-  /*
-  |--------------------------------------------------------------------------
-  | VERIFICA CODE
-  |--------------------------------------------------------------------------
-  */
 
   if (!code) {
-    console.error(
+    return res.status(400).send(
       "Código de autorização não recebido."
     );
-
-    return res.status(400).send(`
-      <html>
-        <body style="
-          margin:0;
-          background:#070707;
-          color:#ff6666;
-          font-family:Arial,sans-serif;
-          display:flex;
-          align-items:center;
-          justify-content:center;
-          min-height:100vh;
-        ">
-          <div style="text-align:center;">
-            <h1>STAGE 72</h1>
-            <p>Código de autorização não recebido.</p>
-          </div>
-        </body>
-      </html>
-    `);
   }
-
-  /*
-  |--------------------------------------------------------------------------
-  | VERIFICA CREDENCIAIS
-  |--------------------------------------------------------------------------
-  */
 
   if (!CLIENT_ID || !CLIENT_SECRET) {
     console.error(
       "Credenciais da Nuvemshop não configuradas."
     );
 
-    console.error(
-      "Client ID configurado:",
-      Boolean(CLIENT_ID)
+    return res.status(500).send(
+      "Credenciais da integração não configuradas."
     );
-
-    console.error(
-      "Client Secret configurado:",
-      Boolean(CLIENT_SECRET)
-    );
-
-    return res.status(500).send(`
-      <html>
-        <body style="
-          margin:0;
-          background:#070707;
-          color:#ff6666;
-          font-family:Arial,sans-serif;
-          display:flex;
-          align-items:center;
-          justify-content:center;
-          min-height:100vh;
-        ">
-          <div style="text-align:center;">
-            <h1>STAGE 72</h1>
-            <p>Credenciais da integração não configuradas.</p>
-          </div>
-        </body>
-      </html>
-    `);
   }
 
   try {
     console.log("Código OAuth recebido.");
     console.log("Solicitando access token...");
-
-    /*
-    |--------------------------------------------------------------------------
-    | TROCA CODE POR ACCESS TOKEN
-    |--------------------------------------------------------------------------
-    */
 
     const response = await fetch(
       "https://www.tiendanube.com/apps/authorize/token",
@@ -204,56 +170,7 @@ app.get("/auth/callback", async (req, res) => {
       }
     );
 
-    /*
-    |--------------------------------------------------------------------------
-    | LÊ RESPOSTA
-    |--------------------------------------------------------------------------
-    */
-
-    let data;
-
-    try {
-      data = await response.json();
-    } catch (jsonError) {
-      console.error(
-        "Resposta OAuth não pôde ser interpretada como JSON."
-      );
-
-      console.error(
-        "Status HTTP:",
-        response.status
-      );
-
-      return res.status(500).send(`
-        <html>
-          <body style="
-            margin:0;
-            background:#070707;
-            color:#ff6666;
-            font-family:Arial,sans-serif;
-            display:flex;
-            align-items:center;
-            justify-content:center;
-            min-height:100vh;
-          ">
-            <div style="text-align:center;">
-              <h1>STAGE 72</h1>
-              <p>Resposta inválida da Nuvemshop.</p>
-            </div>
-          </body>
-        </html>
-      `);
-    }
-
-    /*
-    |--------------------------------------------------------------------------
-    | DIAGNÓSTICO SEGURO
-    |--------------------------------------------------------------------------
-    |
-    | Mostra somente os NOMES dos campos.
-    | Não mostra o access_token.
-    |
-    */
+    const data = await response.json();
 
     console.log(
       "Status HTTP OAuth:",
@@ -267,12 +184,8 @@ app.get("/auth/callback", async (req, res) => {
 
     /*
     |--------------------------------------------------------------------------
-    | TRATA ERRO OAUTH
+    | ERRO OAUTH
     |--------------------------------------------------------------------------
-    |
-    | IMPORTANTE:
-    | Também verificamos data.error.
-    |
     */
 
     if (!response.ok || data.error) {
@@ -288,10 +201,6 @@ app.get("/auth/callback", async (req, res) => {
 
       return res.status(500).send(`
         <html>
-          <head>
-            <title>STAGE 72 - Erro OAuth</title>
-          </head>
-
           <body style="
             margin:0;
             background:#070707;
@@ -304,58 +213,27 @@ app.get("/auth/callback", async (req, res) => {
           ">
             <div style="text-align:center;">
               <h1>STAGE 72</h1>
-
               <h2>FALHA NA AUTORIZAÇÃO</h2>
-
-              <p>
-                A Nuvemshop retornou um erro durante
-                a conexão.
-              </p>
-
-              <p>
-                Consulte os logs do servidor.
-              </p>
+              <p>A Nuvemshop retornou um erro.</p>
             </div>
           </body>
         </html>
       `);
     }
-
-    /*
-    |--------------------------------------------------------------------------
-    | VALIDA ACCESS TOKEN
-    |--------------------------------------------------------------------------
-    */
 
     if (!data.access_token) {
       console.error(
-        "A resposta não contém access_token."
+        "Access token não retornado."
       );
 
-      return res.status(500).send(`
-        <html>
-          <body style="
-            margin:0;
-            background:#070707;
-            color:#ff6666;
-            font-family:Arial,sans-serif;
-            display:flex;
-            align-items:center;
-            justify-content:center;
-            min-height:100vh;
-          ">
-            <div style="text-align:center;">
-              <h1>STAGE 72</h1>
-              <p>Access token não recebido.</p>
-            </div>
-          </body>
-        </html>
-      `);
+      return res.status(500).send(
+        "Access token não recebido."
+      );
     }
 
     /*
     |--------------------------------------------------------------------------
-    | IDENTIFICA A LOJA
+    | STORE ID
     |--------------------------------------------------------------------------
     */
 
@@ -366,46 +244,54 @@ app.get("/auth/callback", async (req, res) => {
       null;
 
     if (!storeId) {
-      console.warn(
-        "Access token recebido, mas Store ID não foi retornado."
+      console.error(
+        "Store ID não retornado pela Nuvemshop."
       );
-    } else {
-      console.log(
-        "Store ID:",
-        storeId
+
+      return res.status(500).send(
+        "ID da loja não recebido."
       );
     }
 
     /*
     |--------------------------------------------------------------------------
-    | CONEXÃO AUTORIZADA
+    | SALVA NO POSTGRESQL
     |--------------------------------------------------------------------------
     */
+
+    await pool.query(
+      `
+        INSERT INTO nuvemshop_stores (
+          store_id,
+          access_token,
+          updated_at
+        )
+        VALUES ($1, $2, NOW())
+
+        ON CONFLICT (store_id)
+
+        DO UPDATE SET
+          access_token = EXCLUDED.access_token,
+          updated_at = NOW()
+      `,
+      [
+        storeId,
+        data.access_token
+      ]
+    );
 
     console.log(
       "Nuvemshop conectada com sucesso."
     );
 
-    /*
-    |--------------------------------------------------------------------------
-    | ARMAZENAMENTO TEMPORÁRIO
-    |--------------------------------------------------------------------------
-    |
-    | O token ainda fica em memória.
-    | Depois vamos persistir no PostgreSQL.
-    |
-    */
+    console.log(
+      "Store ID:",
+      storeId
+    );
 
-    app.locals.nuvemshop = {
-      storeId: storeId,
-      accessToken: data.access_token
-    };
-
-    /*
-    |--------------------------------------------------------------------------
-    | TELA DE SUCESSO
-    |--------------------------------------------------------------------------
-    */
+    console.log(
+      "Autorização salva no PostgreSQL."
+    );
 
     return res.status(200).send(`
       <html>
@@ -435,7 +321,7 @@ app.get("/auth/callback", async (req, res) => {
             </p>
 
             <p>
-              Já podemos automatizar o lote.
+              A autorização foi salva no banco de dados.
             </p>
 
           </div>
@@ -449,25 +335,9 @@ app.get("/auth/callback", async (req, res) => {
       error.message
     );
 
-    return res.status(500).send(`
-      <html>
-        <body style="
-          margin:0;
-          background:#070707;
-          color:#ff6666;
-          font-family:Arial,sans-serif;
-          display:flex;
-          align-items:center;
-          justify-content:center;
-          min-height:100vh;
-        ">
-          <div style="text-align:center;">
-            <h1>STAGE 72</h1>
-            <p>Erro interno ao conectar com a Nuvemshop.</p>
-          </div>
-        </body>
-      </html>
-    `);
+    return res.status(500).send(
+      "Erro interno ao conectar com a Nuvemshop."
+    );
   }
 });
 
@@ -485,11 +355,7 @@ app.post(
     );
 
     console.log(
-      JSON.stringify(
-        req.body,
-        null,
-        2
-      )
+      JSON.stringify(req.body, null, 2)
     );
 
     res.sendStatus(200);
@@ -498,7 +364,7 @@ app.post(
 
 /*
 |--------------------------------------------------------------------------
-| LGPD - STORE REDACT
+| LGPD
 |--------------------------------------------------------------------------
 */
 
@@ -513,12 +379,6 @@ app.post(
   }
 );
 
-/*
-|--------------------------------------------------------------------------
-| LGPD - CUSTOMERS REDACT
-|--------------------------------------------------------------------------
-*/
-
 app.post(
   "/webhooks/lgpd/customers-redact",
   (req, res) => {
@@ -529,12 +389,6 @@ app.post(
     res.sendStatus(200);
   }
 );
-
-/*
-|--------------------------------------------------------------------------
-| LGPD - CUSTOMERS DATA REQUEST
-|--------------------------------------------------------------------------
-*/
 
 app.post(
   "/webhooks/lgpd/customers-data-request",
@@ -551,9 +405,6 @@ app.post(
 |--------------------------------------------------------------------------
 | LOTE STAGE 72
 |--------------------------------------------------------------------------
-|
-| Temporário para testes.
-|
 */
 
 let lote = {
@@ -561,30 +412,27 @@ let lote = {
   target: 10
 };
 
-app.get(
-  "/api/lote",
-  (req, res) => {
-    const remaining = Math.max(
-      lote.target - lote.current,
-      0
-    );
+app.get("/api/lote", (req, res) => {
+  const remaining = Math.max(
+    lote.target - lote.current,
+    0
+  );
 
-    const percentage = Math.min(
-      Math.round(
-        (lote.current / lote.target) * 100
-      ),
-      100
-    );
+  const percentage = Math.min(
+    Math.round(
+      (lote.current / lote.target) * 100
+    ),
+    100
+  );
 
-    res.json({
-      current: lote.current,
-      target: lote.target,
-      remaining: remaining,
-      percentage: percentage,
-      closed: lote.current >= lote.target
-    });
-  }
-);
+  res.json({
+    current: lote.current,
+    target: lote.target,
+    remaining: remaining,
+    percentage: percentage,
+    closed: lote.current >= lote.target
+  });
+});
 
 /*
 |--------------------------------------------------------------------------
@@ -592,25 +440,36 @@ app.get(
 |--------------------------------------------------------------------------
 */
 
-app.get(
-  "/api/status",
-  (req, res) => {
-    const connection =
-      app.locals.nuvemshop;
+app.get("/api/status", async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT store_id, updated_at
+      FROM nuvemshop_stores
+      ORDER BY updated_at DESC
+      LIMIT 1
+    `);
+
+    if (result.rows.length === 0) {
+      return res.json({
+        ok: true,
+        nuvemshopConnected: false,
+        storeId: null
+      });
+    }
 
     res.json({
       ok: true,
+      nuvemshopConnected: true,
+      storeId: result.rows[0].store_id
+    });
 
-      nuvemshopConnected: Boolean(
-        connection?.accessToken
-      ),
-
-      storeId:
-        connection?.storeId ??
-        null
+  } catch (error) {
+    res.status(500).json({
+      ok: false,
+      database: false
     });
   }
-);
+});
 
 /*
 |--------------------------------------------------------------------------
@@ -621,9 +480,11 @@ app.get(
 app.listen(
   PORT,
   "0.0.0.0",
-  () => {
+  async () => {
     console.log(
       `STAGE 72 rodando na porta ${PORT}`
     );
+
+    await prepararBanco();
   }
 );
