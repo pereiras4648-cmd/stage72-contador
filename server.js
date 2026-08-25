@@ -81,24 +81,29 @@ app.get("/auth/callback", async (req, res) => {
     console.log("Código OAuth recebido.");
 
     const response = await fetch(
-      "https://www.nuvemshop.com.br/apps/authorize/token",
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          client_id: CLIENT_ID,
-          client_secret: CLIENT_SECRET,
-          grant_type: "authorization_code",
-          code: code
-        })
-      }
-    );
+  "https://www.tiendanube.com/apps/authorize/token",
+  {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      client_id: CLIENT_ID,
+      client_secret: CLIENT_SECRET,
+      grant_type: "authorization_code",
+      code: code
+    })
+  }
+);
 
-    const data = await response.json();
+const data = await response.json();
 
-   if (!response.ok) {
+console.log(
+  "Campos retornados pela Nuvemshop:",
+  Object.keys(data)
+);
+
+if (!response.ok || data.error) {
   console.error("Erro OAuth:", data.error);
   console.error("Descrição OAuth:", data.error_description);
 
