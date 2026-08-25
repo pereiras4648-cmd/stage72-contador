@@ -3,7 +3,6 @@ const express = require("express");
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-app.use(express.json());
 
 const CLIENT_ID = process.env.NUVEMSHOP_CLIENT_ID;
 const CLIENT_SECRET = process.env.NUVEMSHOP_CLIENT_SECRET;
