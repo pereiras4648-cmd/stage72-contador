@@ -40,8 +40,56 @@ async function prepararBanco() {
       )
     `);
 
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS lotes (
+        id SERIAL PRIMARY KEY,
+        nome TEXT NOT NULL,
+        current_quantity INTEGER NOT NULL DEFAULT 0,
+        target_quantity INTEGER NOT NULL DEFAULT 10,
+        active BOOLEAN NOT NULL DEFAULT TRUE,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS pedidos_processados (
+        order_id BIGINT PRIMARY KEY,
+        store_id BIGINT,
+        quantity INTEGER NOT NULL DEFAULT 0,
+        processed_at TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+
+    const loteExistente = await pool.query(`
+      SELECT id
+      FROM lotes
+      WHERE active = TRUE
+      ORDER BY id DESC
+      LIMIT 1
+    `);
+
+    if (loteExistente.rows.length === 0) {
+      await pool.query(`
+        INSERT INTO lotes (
+          nome,
+          current_quantity,
+          target_quantity,
+          active
+        )
+        VALUES (
+          'STAGE 72',
+          0,
+          10,
+          TRUE
+        )
+      `);
+
+      console.log("Lote inicial criado: 0/10.");
+    }
+
     console.log("PostgreSQL conectado.");
-    console.log("Tabela nuvemshop_stores pronta.");
+    console.log("Tabelas prontas.");
   } catch (error) {
     console.error(
       "Erro ao preparar PostgreSQL:",
@@ -52,7 +100,7 @@ async function prepararBanco() {
 
 /*
 |--------------------------------------------------------------------------
-| STAGE 72
+| PÁGINA INICIAL
 |--------------------------------------------------------------------------
 */
 
@@ -62,6 +110,7 @@ app.get("/", (req, res) => {
       <head>
         <title>STAGE 72</title>
       </head>
+
       <body style="
         margin:0;
         background:#070707;
@@ -72,10 +121,12 @@ app.get("/", (req, res) => {
         justify-content:center;
         min-height:100vh;
       ">
+
         <div style="text-align:center;">
           <h1>STAGE 72</h1>
           <p>Backend online.</p>
         </div>
+
       </body>
     </html>
   `);
@@ -182,12 +233,6 @@ app.get("/auth/callback", async (req, res) => {
       Object.keys(data)
     );
 
-    /*
-    |--------------------------------------------------------------------------
-    | ERRO OAUTH
-    |--------------------------------------------------------------------------
-    */
-
     if (!response.ok || data.error) {
       console.error(
         "Erro OAuth:",
@@ -211,31 +256,23 @@ app.get("/auth/callback", async (req, res) => {
             justify-content:center;
             min-height:100vh;
           ">
+
             <div style="text-align:center;">
               <h1>STAGE 72</h1>
               <h2>FALHA NA AUTORIZAÇÃO</h2>
               <p>A Nuvemshop retornou um erro.</p>
             </div>
+
           </body>
         </html>
       `);
     }
 
     if (!data.access_token) {
-      console.error(
-        "Access token não retornado."
-      );
-
       return res.status(500).send(
         "Access token não recebido."
       );
     }
-
-    /*
-    |--------------------------------------------------------------------------
-    | STORE ID
-    |--------------------------------------------------------------------------
-    */
 
     const storeId =
       data.user_id ??
@@ -244,20 +281,10 @@ app.get("/auth/callback", async (req, res) => {
       null;
 
     if (!storeId) {
-      console.error(
-        "Store ID não retornado pela Nuvemshop."
-      );
-
       return res.status(500).send(
         "ID da loja não recebido."
       );
     }
-
-    /*
-    |--------------------------------------------------------------------------
-    | SALVA NO POSTGRESQL
-    |--------------------------------------------------------------------------
-    */
 
     await pool.query(
       `
@@ -309,6 +336,7 @@ app.get("/auth/callback", async (req, res) => {
           justify-content:center;
           min-height:100vh;
         ">
+
           <div style="text-align:center;">
 
             <h1>STAGE 72</h1>
@@ -316,15 +344,15 @@ app.get("/auth/callback", async (req, res) => {
             <h2>LOJA CONECTADA</h2>
 
             <p>
-              A integração com a Nuvemshop foi
-              autorizada com sucesso.
+              A integração com a Nuvemshop foi autorizada.
             </p>
 
             <p>
-              A autorização foi salva no banco de dados.
+              A autorização está salva no banco de dados.
             </p>
 
           </div>
+
         </body>
       </html>
     `);
@@ -343,24 +371,116 @@ app.get("/auth/callback", async (req, res) => {
 
 /*
 |--------------------------------------------------------------------------
-| WEBHOOK DE PEDIDOS
+| API DO LOTE
 |--------------------------------------------------------------------------
 */
 
-app.post(
-  "/webhooks/orders",
-  (req, res) => {
-    console.log(
-      "Webhook de pedido recebido."
+app.get("/api/lote", async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT
+        id,
+        nome,
+        current_quantity,
+        target_quantity
+      FROM lotes
+      WHERE active = TRUE
+      ORDER BY id DESC
+      LIMIT 1
+    `);
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({
+        ok: false,
+        error: "Nenhum lote ativo."
+      });
+    }
+
+    const lote = result.rows[0];
+
+    const current =
+      Number(lote.current_quantity);
+
+    const target =
+      Number(lote.target_quantity);
+
+    const remaining = Math.max(
+      target - current,
+      0
     );
 
-    console.log(
-      JSON.stringify(req.body, null, 2)
+    const percentage =
+      target > 0
+        ? Math.min(
+            Math.round(
+              (current / target) * 100
+            ),
+            100
+          )
+        : 0;
+
+    res.json({
+      ok: true,
+      id: lote.id,
+      name: lote.nome,
+      current: current,
+      target: target,
+      remaining: remaining,
+      percentage: percentage,
+      closed: current >= target
+    });
+
+  } catch (error) {
+    console.error(
+      "Erro ao consultar lote:",
+      error.message
     );
 
-    res.sendStatus(200);
+    res.status(500).json({
+      ok: false,
+      error: "Erro ao consultar lote."
+    });
   }
-);
+});
+
+/*
+|--------------------------------------------------------------------------
+| WEBHOOK DE PEDIDOS
+|--------------------------------------------------------------------------
+|
+| Nesta etapa recebemos e registramos o evento.
+| No próximo passo vamos validar o tipo do evento,
+| buscar o pedido na API e contar somente o produto correto.
+|--------------------------------------------------------------------------
+*/
+
+app.post("/webhooks/orders", async (req, res) => {
+  try {
+    console.log("Webhook de pedido recebido.");
+
+    console.log(
+      "Campos do webhook:",
+      Object.keys(req.body || {})
+    );
+
+    /*
+    Respondemos rapidamente para a Nuvemshop.
+
+    A lógica definitiva de contabilização será adicionada
+    depois que confirmarmos o formato real do webhook.
+    */
+
+    return res.sendStatus(200);
+
+  } catch (error) {
+    console.error(
+      "Erro no webhook de pedidos:",
+      error.message
+    );
+
+    return res.sendStatus(200);
+  }
+});
 
 /*
 |--------------------------------------------------------------------------
@@ -403,47 +523,16 @@ app.post(
 
 /*
 |--------------------------------------------------------------------------
-| LOTE STAGE 72
-|--------------------------------------------------------------------------
-*/
-
-let lote = {
-  current: 7,
-  target: 10
-};
-
-app.get("/api/lote", (req, res) => {
-  const remaining = Math.max(
-    lote.target - lote.current,
-    0
-  );
-
-  const percentage = Math.min(
-    Math.round(
-      (lote.current / lote.target) * 100
-    ),
-    100
-  );
-
-  res.json({
-    current: lote.current,
-    target: lote.target,
-    remaining: remaining,
-    percentage: percentage,
-    closed: lote.current >= lote.target
-  });
-});
-
-/*
-|--------------------------------------------------------------------------
-| STATUS
+| STATUS DA INTEGRAÇÃO
 |--------------------------------------------------------------------------
 */
 
 app.get("/api/status", async (req, res) => {
   try {
     const result = await pool.query(`
-      SELECT store_id, updated_at
+      SELECT
+        store_id,
+        updated_at
       FROM nuvemshop_stores
       ORDER BY updated_at DESC
       LIMIT 1
@@ -464,6 +553,11 @@ app.get("/api/status", async (req, res) => {
     });
 
   } catch (error) {
+    console.error(
+      "Erro ao consultar status:",
+      error.message
+    );
+
     res.status(500).json({
       ok: false,
       database: false
