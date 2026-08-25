@@ -38,7 +38,8 @@ const WEBHOOK_EVENTS = [
 const pool = new Pool({
   connectionString: DATABASE_URL,
   ssl:
-    DATABASE_URL && DATABASE_URL.includes("localhost")
+    DATABASE_URL &&
+    DATABASE_URL.includes("localhost")
       ? false
       : { rejectUnauthorized: false }
 });
@@ -51,6 +52,12 @@ const pool = new Pool({
 
 async function prepararBanco() {
   try {
+    /*
+    |--------------------------------------------------------------------------
+    | LOJAS AUTORIZADAS
+    |--------------------------------------------------------------------------
+    */
+
     await pool.query(`
       CREATE TABLE IF NOT EXISTS nuvemshop_stores (
         store_id BIGINT PRIMARY KEY,
@@ -59,6 +66,12 @@ async function prepararBanco() {
         updated_at TIMESTAMPTZ DEFAULT NOW()
       )
     `);
+
+    /*
+    |--------------------------------------------------------------------------
+    | LOTES
+    |--------------------------------------------------------------------------
+    */
 
     await pool.query(`
       CREATE TABLE IF NOT EXISTS lotes (
@@ -75,7 +88,7 @@ async function prepararBanco() {
     `);
 
     /*
-    Compatibilidade com a tabela criada anteriormente.
+    Compatibilidade com versões antigas da tabela lotes.
     */
 
     await pool.query(`
@@ -88,6 +101,12 @@ async function prepararBanco() {
       ADD COLUMN IF NOT EXISTS product_id BIGINT
     `);
 
+    /*
+    |--------------------------------------------------------------------------
+    | PEDIDOS PROCESSADOS
+    |--------------------------------------------------------------------------
+    */
+
     await pool.query(`
       CREATE TABLE IF NOT EXISTS pedidos_processados (
         order_id BIGINT PRIMARY KEY,
@@ -98,8 +117,35 @@ async function prepararBanco() {
       )
     `);
 
+    /*
+    IMPORTANTE:
+
+    A tabela já existia no banco antes de adicionarmos
+    store_id, product_id e quantity.
+
+    CREATE TABLE IF NOT EXISTS não altera uma tabela existente,
+    portanto garantimos as colunas abaixo.
+    */
+
+    await pool.query(`
+      ALTER TABLE pedidos_processados
+      ADD COLUMN IF NOT EXISTS store_id BIGINT
+    `);
+
+    await pool.query(`
+      ALTER TABLE pedidos_processados
+      ADD COLUMN IF NOT EXISTS product_id BIGINT
+    `);
+
+    await pool.query(`
+      ALTER TABLE pedidos_processados
+      ADD COLUMN IF NOT EXISTS quantity INTEGER NOT NULL DEFAULT 0
+    `);
+
     console.log("PostgreSQL conectado.");
     console.log("Tabelas prontas.");
+    console.log("Estrutura de pedidos_processados atualizada.");
+
   } catch (error) {
     console.error(
       "Erro ao preparar PostgreSQL:",
@@ -259,9 +305,7 @@ async function criarWebhook(
     {
       method: "POST",
 
-      headers: apiHeaders(
-        accessToken
-      ),
+      headers: apiHeaders(accessToken),
 
       body: JSON.stringify({
         event: event,
@@ -355,9 +399,7 @@ async function buscarPedido(
     `${API_BASE}/${storeId}/orders/${orderId}`,
     {
       method: "GET",
-
-      headers:
-        apiHeaders(accessToken)
+      headers: apiHeaders(accessToken)
     }
   );
 
@@ -427,7 +469,7 @@ async function processarPedido(
 
   /*
   |--------------------------------------------------------------------------
-  | BUSCAR PEDIDO REAL
+  | BUSCAR PEDIDO
   |--------------------------------------------------------------------------
   */
 
@@ -445,7 +487,7 @@ async function processarPedido(
 
   /*
   |--------------------------------------------------------------------------
-  | SOMENTE PAGO
+  | SOMENTE PEDIDO PAGO
   |--------------------------------------------------------------------------
   */
 
@@ -471,11 +513,19 @@ async function processarPedido(
       : [];
 
   /*
-  Todas as variantes 38/40/42/44/46/48
-  pertencem ao mesmo PRODUCT_ID.
+  O produto possui variantes:
 
-  Então somamos pela quantidade do produto,
-  independentemente do variant_id.
+  38
+  40
+  42
+  44
+  46
+  48
+
+  Todas usam o mesmo PRODUCT_ID.
+
+  Portanto, ignoramos variant_id
+  e somamos todas as unidades desse produto.
   */
 
   const quantity =
@@ -496,7 +546,7 @@ async function processarPedido(
 
   /*
   |--------------------------------------------------------------------------
-  | NÃO É O PRODUTO DO LOTE
+  | PEDIDO NÃO TEM O PRODUTO DO LOTE
   |--------------------------------------------------------------------------
   */
 
@@ -547,7 +597,8 @@ async function processarPedido(
     await client.query("BEGIN");
 
     /*
-    Garante idempotência.
+    Garante que um mesmo pedido
+    nunca seja contado duas vezes.
     */
 
     const inserted =
@@ -595,7 +646,9 @@ async function processarPedido(
     }
 
     /*
-    Garante o lote.
+    |--------------------------------------------------------------------------
+    | GARANTIR LOTE
+    |--------------------------------------------------------------------------
     */
 
     let loteResult =
@@ -657,7 +710,9 @@ async function processarPedido(
       loteResult.rows[0].id;
 
     /*
-    Atualiza o contador.
+    |--------------------------------------------------------------------------
+    | SOMAR AO CONTADOR
+    |--------------------------------------------------------------------------
     */
 
     const updated =
@@ -880,7 +935,7 @@ app.get(
       }
 
       /*
-      Salva autorização.
+      Salvar autorização.
       */
 
       await pool.query(
@@ -996,7 +1051,7 @@ app.post(
   "/webhooks/orders",
   (req, res) => {
     /*
-    Responde imediatamente.
+    Responde imediatamente à Nuvemshop.
     */
 
     res.sendStatus(200);
@@ -1061,10 +1116,98 @@ app.post(
 
 /*
 |--------------------------------------------------------------------------
-| SETUP WEBHOOKS MANUAL
+| REPROCESSAR PEDIDO DE TESTE
 |--------------------------------------------------------------------------
 |
-| ESSA É A ROTA QUE ESTAVA FALTANDO.
+| Criamos esta rota para reaproveitar
+| a venda que você já fez.
+|
+|--------------------------------------------------------------------------
+*/
+
+app.get(
+  "/api/reprocess-order/:orderId",
+  async (req, res) => {
+    try {
+      const orderId =
+        Number(
+          req.params.orderId
+        );
+
+      if (!orderId) {
+        return res
+          .status(400)
+          .json({
+            ok: false,
+            error:
+              "orderId inválido."
+          });
+      }
+
+      const storeResult =
+        await pool.query(`
+          SELECT
+            store_id
+
+          FROM nuvemshop_stores
+
+          ORDER BY
+            updated_at DESC
+
+          LIMIT 1
+        `);
+
+      if (
+        storeResult.rows.length === 0
+      ) {
+        return res
+          .status(404)
+          .json({
+            ok: false,
+            error:
+              "Nenhuma loja autorizada."
+          });
+      }
+
+      const storeId =
+        Number(
+          storeResult.rows[0]
+            .store_id
+        );
+
+      await processarPedido(
+        storeId,
+        orderId
+      );
+
+      return res.json({
+        ok: true,
+        storeId,
+        orderId,
+        message:
+          "Pedido processado."
+      });
+
+    } catch (error) {
+      console.error(
+        "Erro reprocessamento:",
+        error.message
+      );
+
+      return res
+        .status(500)
+        .json({
+          ok: false,
+          error:
+            error.message
+        });
+    }
+  }
+);
+
+/*
+|--------------------------------------------------------------------------
+| SETUP WEBHOOKS
 |--------------------------------------------------------------------------
 */
 
@@ -1259,7 +1402,9 @@ app.get(
       return res
         .status(500)
         .json({
-          ok: false
+          ok: false,
+          error:
+            error.message
         });
     }
   }
