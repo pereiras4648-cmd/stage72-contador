@@ -98,28 +98,36 @@ app.get("/auth/callback", async (req, res) => {
 
     const data = await response.json();
 
-    if (!response.ok) {
-      console.error(
-        "Erro ao obter access token:",
-        JSON.stringify(data)
-      );
+   if (!response.ok) {
+  console.error("Erro OAuth:", data.error);
+  console.error("Descrição OAuth:", data.error_description);
 
-      return res.status(500).send(`
-        <html>
-          <body style="
-            background:#070707;
-            color:#ff6666;
-            font-family:Arial,sans-serif;
-            text-align:center;
-            padding-top:100px;
-          ">
-            <h1>STAGE 72</h1>
-            <p>Não foi possível concluir a autorização.</p>
-          </body>
-        </html>
-      `);
-    }
+  return res.status(500).send(`
+    <html>
+      <body style="
+        background:#070707;
+        color:#ff6666;
+        font-family:Arial,sans-serif;
+        text-align:center;
+        padding-top:100px;
+      ">
+        <h1>STAGE 72</h1>
+        <p>Não foi possível concluir a autorização.</p>
+      </body>
+    </html>
+  `);
+}
 
+/*
+|--------------------------------------------------------------------------
+| Diagnóstico seguro
+|--------------------------------------------------------------------------
+*/
+
+console.log(
+  "Campos retornados pela Nuvemshop:",
+  Object.keys(data)
+);
     /*
     |--------------------------------------------------------------------------
     | Diagnóstico seguro
