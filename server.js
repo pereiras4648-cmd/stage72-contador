@@ -8,8 +8,6 @@ const PORT = process.env.PORT || 3000;
 |--------------------------------------------------------------------------
 | CORS
 |--------------------------------------------------------------------------
-| Precisa ficar ANTES das rotas.
-|--------------------------------------------------------------------------
 */
 
 app.use((req, res, next) => {
@@ -35,12 +33,6 @@ app.use((req, res, next) => {
   next();
 });
 
-/*
-|--------------------------------------------------------------------------
-| JSON
-|--------------------------------------------------------------------------
-*/
-
 app.use(express.json());
 
 /*
@@ -62,20 +54,49 @@ const DATABASE_URL =
 |--------------------------------------------------------------------------
 | STAGE 72
 |--------------------------------------------------------------------------
+|
+| Não existe mais PRODUCT_ID fixo.
+| Cada produto terá seu próprio lote.
+|--------------------------------------------------------------------------
 */
 
-const PRODUCT_ID = 362509901;
-const TARGET = 10;
+const DEFAULT_TARGET = 10;
 
 const API_BASE =
   "https://api.nuvemshop.com.br/v1";
 
-const WEBHOOK_URL =
-  "https://stage72-contador.onrender.com/webhooks/orders";
+const BASE_URL =
+  "https://stage72-contador.onrender.com";
 
-const WEBHOOK_EVENTS = [
-  "order/created",
-  "order/updated"
+const ORDER_WEBHOOK_URL =
+  `${BASE_URL}/webhooks/orders`;
+
+const PRODUCT_WEBHOOK_URL =
+  `${BASE_URL}/webhooks/products`;
+
+/*
+|--------------------------------------------------------------------------
+| WEBHOOKS
+|--------------------------------------------------------------------------
+*/
+
+const WEBHOOK_CONFIGS = [
+  {
+    event: "order/created",
+    url: ORDER_WEBHOOK_URL
+  },
+  {
+    event: "order/updated",
+    url: ORDER_WEBHOOK_URL
+  },
+  {
+    event: "product/created",
+    url: PRODUCT_WEBHOOK_URL
+  },
+  {
+    event: "product/updated",
+    url: PRODUCT_WEBHOOK_URL
+  }
 ];
 
 /*
@@ -98,11 +119,54 @@ const pool = new Pool({
 
 /*
 |--------------------------------------------------------------------------
+| NORMALIZAR NOME
+|--------------------------------------------------------------------------
+|
+| A API pode devolver:
+|
+| "Calça"
+|
+| ou:
+|
+| {
+|   pt: "Calça"
+| }
+|--------------------------------------------------------------------------
+*/
+
+function normalizarNomeProduto(nome) {
+
+  if (!nome) {
+    return "Produto STAGE 72";
+  }
+
+  if (typeof nome === "string") {
+    return nome;
+  }
+
+  if (typeof nome === "object") {
+
+    return (
+      nome.pt ||
+      nome["pt-BR"] ||
+      nome.es ||
+      nome.en ||
+      Object.values(nome)[0] ||
+      "Produto STAGE 72"
+    );
+  }
+
+  return String(nome);
+}
+
+/*
+|--------------------------------------------------------------------------
 | PREPARAR BANCO
 |--------------------------------------------------------------------------
 */
 
 async function prepararBanco() {
+
   try {
 
     /*
@@ -140,6 +204,10 @@ async function prepararBanco() {
       )
     `);
 
+    /*
+    Compatibilidade com versões antigas.
+    */
+
     await pool.query(`
       ALTER TABLE lotes
       ADD COLUMN IF NOT EXISTS store_id BIGINT
@@ -150,9 +218,37 @@ async function prepararBanco() {
       ADD COLUMN IF NOT EXISTS product_id BIGINT
     `);
 
+    await pool.query(`
+      ALTER TABLE lotes
+      ADD COLUMN IF NOT EXISTS nome TEXT
+    `);
+
+    await pool.query(`
+      ALTER TABLE lotes
+      ADD COLUMN IF NOT EXISTS current_quantity
+      INTEGER NOT NULL DEFAULT 0
+    `);
+
+    await pool.query(`
+      ALTER TABLE lotes
+      ADD COLUMN IF NOT EXISTS target_quantity
+      INTEGER NOT NULL DEFAULT 10
+    `);
+
+    await pool.query(`
+      ALTER TABLE lotes
+      ADD COLUMN IF NOT EXISTS active
+      BOOLEAN NOT NULL DEFAULT TRUE
+    `);
+
     /*
     |--------------------------------------------------------------------------
     | PEDIDOS PROCESSADOS
+    |--------------------------------------------------------------------------
+    |
+    | Aqui continuamos registrando o pedido uma única vez.
+    |
+    | Dentro de um pedido podemos atualizar vários produtos.
     |--------------------------------------------------------------------------
     */
 
@@ -160,16 +256,10 @@ async function prepararBanco() {
       CREATE TABLE IF NOT EXISTS pedidos_processados (
         order_id BIGINT PRIMARY KEY,
         store_id BIGINT,
-        product_id BIGINT,
         quantity INTEGER NOT NULL DEFAULT 0,
         processed_at TIMESTAMPTZ DEFAULT NOW()
       )
     `);
-
-    /*
-    Compatibilidade com banco criado
-    pelas versões anteriores.
-    */
 
     await pool.query(`
       ALTER TABLE pedidos_processados
@@ -178,17 +268,21 @@ async function prepararBanco() {
 
     await pool.query(`
       ALTER TABLE pedidos_processados
-      ADD COLUMN IF NOT EXISTS product_id BIGINT
+      ADD COLUMN IF NOT EXISTS quantity
+      INTEGER NOT NULL DEFAULT 0
     `);
 
-    await pool.query(`
-      ALTER TABLE pedidos_processados
-      ADD COLUMN IF NOT EXISTS quantity INTEGER NOT NULL DEFAULT 0
-    `);
+    /*
+    A coluna product_id antiga pode continuar existindo.
+    Não precisamos apagá-la para não correr risco
+    com dados históricos.
+    */
 
     console.log("PostgreSQL conectado.");
     console.log("Tabelas prontas.");
-    console.log("CORS STAGE 72 ativo.");
+    console.log(
+      "STAGE 72 preparado para múltiplos produtos."
+    );
 
   } catch (error) {
 
@@ -196,6 +290,8 @@ async function prepararBanco() {
       "Erro ao preparar PostgreSQL:",
       error.message
     );
+
+    throw error;
   }
 }
 
@@ -206,6 +302,7 @@ async function prepararBanco() {
 */
 
 function apiHeaders(accessToken) {
+
   return {
     Authorization:
       `Bearer ${accessToken}`,
@@ -242,7 +339,9 @@ async function buscarLoja(storeId) {
 
         LIMIT 1
       `,
-      [storeId]
+      [
+        storeId
+      ]
     );
 
   return result.rows[0] || null;
@@ -250,14 +349,63 @@ async function buscarLoja(storeId) {
 
 /*
 |--------------------------------------------------------------------------
-| GARANTIR LOTE
+| BUSCAR ÚLTIMA LOJA
 |--------------------------------------------------------------------------
 */
 
-async function garantirLote(storeId) {
+async function buscarUltimaLoja() {
+
+  const result =
+    await pool.query(`
+      SELECT
+        store_id,
+        access_token
+
+      FROM nuvemshop_stores
+
+      ORDER BY
+        updated_at DESC
+
+      LIMIT 1
+    `);
+
+  return result.rows[0] || null;
+}
+
+/*
+|--------------------------------------------------------------------------
+| GARANTIR LOTE DO PRODUTO
+|--------------------------------------------------------------------------
+*/
+
+async function garantirLote(
+  storeId,
+  productId,
+  productName = "Produto STAGE 72"
+) {
+
+  productId =
+    Number(productId);
+
+  if (!productId) {
+
+    throw new Error(
+      "productId inválido ao criar lote."
+    );
+  }
+
+  const nome =
+    normalizarNomeProduto(
+      productName
+    );
+
+  /*
+  Procura lote ativo existente.
+  */
 
   const existing =
-    await pool.query(      `
+    await pool.query(
+      `
         SELECT *
 
         FROM lotes
@@ -267,25 +415,53 @@ async function garantirLote(storeId) {
           AND product_id = $2
           AND active = TRUE
 
-        ORDER BY id DESC
+        ORDER BY
+          id DESC
 
         LIMIT 1
       `,
       [
         storeId,
-        PRODUCT_ID
+        productId
       ]
     );
 
   if (
     existing.rows.length > 0
   ) {
-    return existing.rows[0];
-  }
 
-  const created =
+    /*
+    Atualiza o nome caso tenha mudado.
+    */
+
     await pool.query(
       `
+        UPDATE lotes
+
+        SET
+          nome = $1,
+          updated_at = NOW()
+
+        WHERE id = $2
+      `,
+      [
+        nome,
+        existing.rows[0].id
+      ]
+    );
+
+    return {
+      ...existing.rows[0],
+      nome
+    };
+  }
+
+  /*
+  Cria lote automaticamente.
+  */
+
+  const created =
+    await pool.query(      `
         INSERT INTO lotes (
           store_id,
           product_id,
@@ -298,9 +474,9 @@ async function garantirLote(storeId) {
         VALUES (
           $1,
           $2,
-          'STAGE 72',
-          0,
           $3,
+          0,
+          $4,
           TRUE
         )
 
@@ -308,16 +484,206 @@ async function garantirLote(storeId) {
       `,
       [
         storeId,
-        PRODUCT_ID,
-        TARGET
+        productId,
+        nome,
+        DEFAULT_TARGET
       ]
     );
 
   console.log(
-    `Lote criado: produto ${PRODUCT_ID} - 0/${TARGET}`
+    `Lote criado automaticamente: ${nome} (${productId}) 0/${DEFAULT_TARGET}`
   );
 
   return created.rows[0];
+}
+
+/*
+|--------------------------------------------------------------------------
+| BUSCAR PRODUTO NA NUVEMSHOP
+|--------------------------------------------------------------------------
+*/
+
+async function buscarProduto(
+  storeId,
+  accessToken,
+  productId
+) {
+
+  const response =
+    await fetch(
+      `${API_BASE}/${storeId}/products/${productId}`,
+      {
+        method: "GET",
+
+        headers:
+          apiHeaders(accessToken)
+      }
+    );
+
+  const text =
+    await response.text();
+
+  if (!response.ok) {
+
+    throw new Error(
+      `Erro buscando produto ${productId}: ${response.status} ${text}`
+    );
+  }
+
+  return text
+    ? JSON.parse(text)
+    : null;
+}
+
+/*
+|--------------------------------------------------------------------------
+| LISTAR PRODUTOS DA NUVEMSHOP
+|--------------------------------------------------------------------------
+*/
+
+async function listarProdutos(
+  storeId,
+  accessToken
+) {
+
+  const todos = [];
+
+  let page = 1;
+
+  while (true) {
+
+    const response =
+      await fetch(
+        `${API_BASE}/${storeId}/products?per_page=200&page=${page}`,
+        {
+          method: "GET",
+
+          headers:
+            apiHeaders(accessToken)
+        }
+      );
+
+    const text =
+      await response.text();
+
+    if (!response.ok) {
+
+      throw new Error(
+        `Erro listando produtos: ${response.status} ${text}`
+      );
+    }
+
+    const products =
+      text
+        ? JSON.parse(text)
+        : [];
+
+    if (
+      !Array.isArray(products) ||
+      products.length === 0
+    ) {
+      break;
+    }
+
+    todos.push(
+      ...products
+    );
+
+    if (
+      products.length < 200
+    ) {
+      break;
+    }
+
+    page += 1;
+  }
+
+  return todos;
+}
+
+/*
+|--------------------------------------------------------------------------
+| SINCRONIZAR PRODUTOS
+|--------------------------------------------------------------------------
+|
+| Cria lote 0/10 para qualquer produto publicado
+| que ainda não exista no banco.
+|--------------------------------------------------------------------------
+*/
+
+async function sincronizarProdutos(
+  storeId,
+  accessToken
+) {
+
+  const products =
+    await listarProdutos(
+      storeId,
+      accessToken
+    );
+
+  const results = [];
+
+  for (
+    const product
+    of products
+  ) {
+
+    const productId =
+      Number(
+        product.id
+      );
+
+    if (!productId) {
+      continue;
+    }
+
+    /*
+    Ignora produto não publicado.
+    */
+
+    if (
+      product.published === false
+    ) {
+      continue;
+    }
+
+    const nome =
+      normalizarNomeProduto(
+        product.name
+      );
+
+    const lote =
+      await garantirLote(
+        storeId,
+        productId,
+        nome
+      );
+
+    results.push({
+      productId,
+      nome,
+      loteId:
+        lote.id,
+
+      current:
+        Number(
+          lote.current_quantity || 0
+        ),
+
+      target:
+        Number(
+          lote.target_quantity ||
+          DEFAULT_TARGET
+        )
+    });
+  }
+
+  console.log(
+    `Sincronização concluída: ${results.length} produto(s).`
+  );
+
+  return results;
 }
 
 /*
@@ -352,11 +718,9 @@ async function listarWebhooks(
     );
   }
 
-  if (!text) {
-    return [];
-  }
-
-  return JSON.parse(text);
+  return text
+    ? JSON.parse(text)
+    : [];
 }
 
 /*
@@ -368,7 +732,8 @@ async function listarWebhooks(
 async function criarWebhook(
   storeId,
   accessToken,
-  event
+  event,
+  url
 ) {
 
   const response =
@@ -382,8 +747,8 @@ async function criarWebhook(
 
         body:
           JSON.stringify({
-            event: event,
-            url: WEBHOOK_URL
+            event,
+            url
           })
       }
     );
@@ -394,12 +759,12 @@ async function criarWebhook(
   if (!response.ok) {
 
     throw new Error(
-      `Erro criando ${event}: ${response.status} ${text}`
+      `Erro criando webhook ${event}: ${response.status} ${text}`
     );
   }
 
   console.log(
-    `Webhook ${event} criado.`
+    `Webhook ${event} criado em ${url}`
   );
 
   return true;
@@ -416,7 +781,7 @@ async function configurarWebhooks(
   accessToken
 ) {
 
-  const webhooks =
+  const existentes =
     await listarWebhooks(
       storeId,
       accessToken
@@ -425,26 +790,27 @@ async function configurarWebhooks(
   const results = [];
 
   for (
-    const event
-    of WEBHOOK_EVENTS
+    const config
+    of WEBHOOK_CONFIGS
   ) {
 
     const exists =
-      Array.isArray(webhooks) &&
-      webhooks.some(
+      Array.isArray(existentes) &&
+      existentes.some(
         (webhook) =>
-          webhook.event === event &&
-          webhook.url === WEBHOOK_URL
+          webhook.event === config.event &&
+          webhook.url === config.url
       );
 
     if (exists) {
 
-      console.log(
-        `Webhook ${event} já existe.`
-      );
-
       results.push({
-        event,
+        event:
+          config.event,
+
+        url:
+          config.url,
+
         status:
           "already_exists"
       });
@@ -455,11 +821,17 @@ async function configurarWebhooks(
     await criarWebhook(
       storeId,
       accessToken,
-      event
+      config.event,
+      config.url
     );
 
     results.push({
-      event,
+      event:
+        config.event,
+
+      url:
+        config.url,
+
       status:
         "created"
     });
@@ -501,7 +873,86 @@ async function buscarPedido(
     );
   }
 
-  return JSON.parse(text);
+  return text
+    ? JSON.parse(text)
+    : null;
+}
+
+/*
+|--------------------------------------------------------------------------
+| AGRUPAR ITENS DO PEDIDO POR PRODUTO
+|--------------------------------------------------------------------------
+|
+| Exemplo:
+|
+| Tamanho 38 + tamanho 40 do mesmo produto
+| viram uma única contagem:
+|
+| product_id 123 = 2 peças
+|--------------------------------------------------------------------------
+*/
+
+function agruparProdutosPedido(
+  products
+) {
+
+  const grouped =
+    new Map();
+
+  for (
+    const item
+    of products
+  ) {
+
+    const productId =
+      Number(
+        item.product_id
+      );
+
+    const quantity =
+      Number(
+        item.quantity || 0
+      );
+
+    if (
+      !productId ||
+      quantity <= 0
+    ) {
+      continue;
+    }
+
+    const atual =
+      grouped.get(productId) || {
+        productId,
+        quantity: 0,
+        nome:
+          normalizarNomeProduto(
+            item.name
+          )
+      };
+
+    atual.quantity +=
+      quantity;
+
+    if (
+      !atual.nome ||
+      atual.nome === "Produto STAGE 72"
+    ) {
+      atual.nome =
+        normalizarNomeProduto(
+          item.name
+        );
+    }
+
+    grouped.set(
+      productId,
+      atual
+    );
+  }
+
+  return Array.from(
+    grouped.values()
+  );
 }
 
 /*
@@ -517,7 +968,7 @@ async function processarPedido(
 
   /*
   |--------------------------------------------------------------------------
-  | JÁ FOI PROCESSADO?
+  | JÁ PROCESSADO?
   |--------------------------------------------------------------------------
   */
 
@@ -532,7 +983,9 @@ async function processarPedido(
 
         LIMIT 1
       `,
-      [orderId]
+      [
+        orderId
+      ]
     );
 
   if (
@@ -550,14 +1003,10 @@ async function processarPedido(
     };
   }
 
-  /*
-  |--------------------------------------------------------------------------
-  | LOJA
-  |--------------------------------------------------------------------------
-  */
-
   const store =
-    await buscarLoja(storeId);
+    await buscarLoja(
+      storeId
+    );
 
   if (!store) {
 
@@ -566,12 +1015,6 @@ async function processarPedido(
     );
   }
 
-  /*
-  |--------------------------------------------------------------------------
-  | PEDIDO
-  |--------------------------------------------------------------------------
-  */
-
   const order =
     await buscarPedido(
       storeId,
@@ -579,24 +1022,21 @@ async function processarPedido(
       orderId
     );
 
+  if (!order) {
+
+    throw new Error(
+      `Pedido ${orderId} não encontrado.`
+    );
+  }
+
   console.log(
     `Pedido ${orderId} status de pagamento:`,
     order.payment_status
   );
 
-  /*
-  |--------------------------------------------------------------------------
-  | SOMENTE PEDIDO PAGO
-  |--------------------------------------------------------------------------
-  */
-
   if (
     order.payment_status !== "paid"
   ) {
-
-    console.log(
-      `Pedido ${orderId} ainda não está pago.`
-    );
 
     return {
       processed: false,
@@ -605,96 +1045,28 @@ async function processarPedido(
     };
   }
 
-  /*
-  |--------------------------------------------------------------------------
-  | PRODUTOS
-  |--------------------------------------------------------------------------
-  */
-
   const products =
-    Array.isArray(order.products)
+    Array.isArray(
+      order.products
+    )
       ? order.products
       : [];
 
-  /*
-  Todas as variantes:
-
-  38
-  40
-  42
-  44
-  46
-  48
-
-  pertencem ao mesmo PRODUCT_ID.
-  */
-
-  const quantity =
-    products
-      .filter(
-        (item) =>
-          Number(
-            item.product_id
-          ) === PRODUCT_ID
-      )
-      .reduce(
-        (total, item) =>
-          total +
-          Number(
-            item.quantity || 0
-          ),
-        0
-      );
-
-  /*
-  |--------------------------------------------------------------------------
-  | PEDIDO SEM O PRODUTO
-  |--------------------------------------------------------------------------
-  */
-
-  if (quantity <= 0) {
-
-    console.log(
-      `Pedido ${orderId} não contém produto ${PRODUCT_ID}.`
+  const grouped =
+    agruparProdutosPedido(
+      products
     );
 
-    await pool.query(      `
-        INSERT INTO pedidos_processados (
-          order_id,
-          store_id,
-          product_id,
-          quantity
-        )
-
-        VALUES (
-          $1,
-          $2,
-          $3,
-          0
-        )
-
-        ON CONFLICT (order_id)
-        DO NOTHING
-      `,
-      [
-        orderId,
-        storeId,
-        PRODUCT_ID
-      ]
-    );
+  if (
+    grouped.length === 0
+  ) {
 
     return {
       processed: false,
       reason:
-        "product_not_found"
+        "no_products"
     };
   }
-
-  /*
-  |--------------------------------------------------------------------------
-  | TRANSAÇÃO
-  |--------------------------------------------------------------------------
-  */
 
   const client =
     await pool.connect();
@@ -706,8 +1078,7 @@ async function processarPedido(
     );
 
     /*
-    Registra primeiro para impedir
-    contagem duplicada.
+    Registra o pedido uma única vez.
     */
 
     const inserted =
@@ -716,15 +1087,13 @@ async function processarPedido(
           INSERT INTO pedidos_processados (
             order_id,
             store_id,
-            product_id,
             quantity
           )
 
           VALUES (
             $1,
             $2,
-            $3,
-            $4
+            $3
           )
 
           ON CONFLICT (order_id)
@@ -735,8 +1104,11 @@ async function processarPedido(
         [
           orderId,
           storeId,
-          PRODUCT_ID,
-          quantity
+          grouped.reduce(
+            (total, item) =>
+              total + item.quantity,
+            0
+          )
         ]
       );
 
@@ -748,10 +1120,6 @@ async function processarPedido(
         "ROLLBACK"
       );
 
-      console.log(
-        `Pedido ${orderId} já contado.`
-      );
-
       return {
         processed: false,
         reason:
@@ -759,140 +1127,211 @@ async function processarPedido(
       };
     }
 
-    /*
-    |--------------------------------------------------------------------------
-    | BUSCAR LOTE
-    |--------------------------------------------------------------------------
-    */
+    const updates = [];
 
-    let loteResult =
-      await client.query(
-        `
-          SELECT id
-
-          FROM lotes
-
-          WHERE
-            store_id = $1
-            AND product_id = $2
-            AND active = TRUE
-
-          ORDER BY id DESC
-
-          LIMIT 1
-        `,
-        [
-          storeId,
-          PRODUCT_ID
-        ]
-      );
-
-    /*
-    |--------------------------------------------------------------------------
-    | CRIAR LOTE SE NECESSÁRIO
-    |--------------------------------------------------------------------------
-    */
-
-    if (
-      loteResult.rows.length === 0
+    for (
+      const item
+      of grouped
     ) {
 
-      loteResult =
+      const productId =
+        item.productId;
+
+      let nome =
+        item.nome;
+
+      /*
+      Tenta obter o nome oficial
+      direto da Nuvemshop.
+      */
+
+      try {
+
+        const product =
+          await buscarProduto(
+            storeId,
+            store.access_token,
+            productId
+          );
+
+        if (
+          product &&
+          product.name
+        ) {
+
+          nome =
+            normalizarNomeProduto(
+              product.name
+            );
+        }
+
+      } catch (error) {
+
+        console.error(
+          `Não foi possível atualizar nome do produto ${productId}:`,
+          error.message
+        );
+      }
+
+      /*
+      Garante lote do produto.
+      */
+
+      const loteResult =
         await client.query(
           `
-            INSERT INTO lotes (
-              store_id,
-              product_id,
-              nome,
-              current_quantity,
-              target_quantity,
-              active
-            )
+            SELECT *
 
-            VALUES (
-              $1,
-              $2,
-              'STAGE 72',
-              0,
-              $3,
-              TRUE
-            )
+            FROM lotes
 
-            RETURNING id
+            WHERE
+              store_id = $1
+              AND product_id = $2
+              AND active = TRUE
+
+            ORDER BY
+              id DESC
+
+            LIMIT 1
           `,
           [
             storeId,
-            PRODUCT_ID,
-            TARGET
+            productId
           ]
         );
+
+      let lote;
+
+      if (
+        loteResult.rows.length > 0
+      ) {
+
+        lote =
+          loteResult.rows[0];
+
+        await client.query(
+          `
+            UPDATE lotes
+
+            SET
+              nome = $1,
+              updated_at = NOW()
+
+            WHERE id = $2
+          `,
+          [
+            nome,
+            lote.id
+          ]
+        );
+
+      } else {
+
+        const created =
+          await client.query(
+            `
+              INSERT INTO lotes (
+                store_id,
+                product_id,
+                nome,
+                current_quantity,
+                target_quantity,
+                active
+              )
+
+              VALUES (
+                $1,
+                $2,
+                $3,
+                0,
+                $4,
+                TRUE
+              )
+
+              RETURNING *
+            `,
+            [
+              storeId,
+              productId,
+              nome,
+              DEFAULT_TARGET
+            ]
+          );
+
+        lote =
+          created.rows[0];
+      }
+
+      /*
+      Atualiza apenas o lote
+      desse produto.
+      */
+
+      const updated =
+        await client.query(
+          `
+            UPDATE lotes
+
+            SET
+              current_quantity =
+                LEAST(
+                  current_quantity + $1,
+                  target_quantity
+                ),
+
+              updated_at =
+                NOW()
+
+            WHERE id = $2
+
+            RETURNING
+              id,
+              product_id,
+              nome,
+              current_quantity,
+              target_quantity
+          `,
+          [
+            item.quantity,
+            lote.id
+          ]
+        );
+
+      updates.push({
+        productId,
+
+        quantity:
+          item.quantity,
+
+        nome:
+          updated.rows[0].nome,
+
+        current:
+          Number(
+            updated.rows[0]
+              .current_quantity
+          ),
+
+        target:
+          Number(
+            updated.rows[0]
+              .target_quantity
+          )
+      });
     }
-
-    const loteId =
-      loteResult.rows[0].id;
-
-    /*
-    |--------------------------------------------------------------------------
-    | SOMAR AO CONTADOR
-    |--------------------------------------------------------------------------
-    */
-
-    const updated =
-      await client.query(
-        `
-          UPDATE lotes
-
-          SET
-            current_quantity =
-              LEAST(
-                current_quantity + $1,
-                target_quantity
-              ),
-
-            updated_at =
-              NOW()
-
-          WHERE id = $2
-
-          RETURNING
-            current_quantity,
-            target_quantity
-        `,
-        [
-          quantity,
-          loteId
-        ]
-      );
 
     await client.query(
       "COMMIT"
     );
 
-    const current =
-      Number(
-        updated.rows[0]
-          .current_quantity
-      );
-
-    const target =
-      Number(
-        updated.rows[0]
-          .target_quantity
-      );
-
     console.log(
-      `Pedido ${orderId}: +${quantity} peça(s).`
-    );
-
-    console.log(
-      `Lote STAGE 72: ${current}/${target}`
+      `Pedido ${orderId} processado em ${updates.length} produto(s).`
     );
 
     return {
       processed: true,
-      quantity,
-      current,
-      target
+      products:
+        updates
     };
 
   } catch (error) {
@@ -925,7 +1364,6 @@ app.get(
 
     res.send(`
       <html>
-
         <body style="
           margin:0;
           background:#070707;
@@ -936,27 +1374,11 @@ app.get(
           justify-content:center;
           min-height:100vh;
         ">
-
-          <div style="
-            text-align:center;
-          ">
-
-            <h1>
-              STAGE 72
-            </h1>
-
-            <p>
-              Backend online.
-            </p>
-
-            <p>
-              CORS ativo.
-            </p>
-
+          <div style="text-align:center;">
+            <h1>STAGE 72</h1>
+            <p>Backend multi-produto online.</p>
           </div>
-
         </body>
-
       </html>
     `);
   }
@@ -980,13 +1402,10 @@ app.get(
 
       return res.json({
         ok: true,
-
         service:
           "stage72-contador",
-
         database: true,
-
-        cors: true
+        multiProduct: true
       });
 
     } catch (error) {
@@ -995,28 +1414,20 @@ app.get(
         .status(500)
         .json({
           ok: false,
-          database: false
+          error:
+            error.message
         });
     }
   }
-);
-
-/*
+);/*
 |--------------------------------------------------------------------------
 | TESTE CORS
-|--------------------------------------------------------------------------
-| Essa rota serve para confirmar que o Render recebeu esta versão.
 |--------------------------------------------------------------------------
 */
 
 app.get(
   "/api/cors-test",
   (req, res) => {
-
-    res.setHeader(
-      "Access-Control-Allow-Origin",
-      "*"
-    );
 
     res.setHeader(
       "Cache-Control",
@@ -1026,8 +1437,9 @@ app.get(
     return res.json({
       ok: true,
       cors: true,
+      multiProduct: true,
       message:
-        "CORS STAGE 72 ativo"
+        "STAGE 72 multi-produto ativo"
     });
   }
 );
@@ -1058,10 +1470,6 @@ app.get(
       !CLIENT_ID ||
       !CLIENT_SECRET
     ) {
-
-      console.error(
-        "Credenciais da Nuvemshop não configuradas."
-      );
 
       return res
         .status(500)
@@ -1114,39 +1522,14 @@ app.get(
 
         console.error(
           "Erro OAuth:",
-          data.error
-        );
-
-        console.error(
-          "Descrição OAuth:",
-          data.error_description
+          data
         );
 
         return res
           .status(500)
-          .send(`
-            <html>
-
-              <body style="
-                background:#070707;
-                color:#ff6666;
-                font-family:Arial,sans-serif;
-                text-align:center;
-                padding-top:100px;
-              ">
-
-                <h1>
-                  STAGE 72
-                </h1>
-
-                <p>
-                  Não foi possível concluir a autorização.
-                </p>
-
-              </body>
-
-            </html>
-          `);
+          .send(
+            "Não foi possível concluir a autorização."
+          );
       }
 
       const storeId =
@@ -1159,10 +1542,6 @@ app.get(
         !data.access_token
       ) {
 
-        console.error(
-          "Dados OAuth incompletos."
-        );
-
         return res
           .status(500)
           .send(
@@ -1171,7 +1550,7 @@ app.get(
       }
 
       /*
-      Salvar loja/token.
+      Salva ou atualiza o token da loja.
       */
 
       await pool.query(
@@ -1204,15 +1583,7 @@ app.get(
       );
 
       /*
-      Garantir lote.
-      */
-
-      await garantirLote(
-        storeId
-      );
-
-      /*
-      Garantir webhooks.
+      Configura webhooks.
       */
 
       const webhooks =
@@ -1221,23 +1592,32 @@ app.get(
           data.access_token
         );
 
+      /*
+      Já sincroniza todos os produtos
+      existentes nessa autorização.
+      */
+
+      const produtos =
+        await sincronizarProdutos(
+          storeId,
+          data.access_token
+        );
+
       console.log(
-        "Nuvemshop conectada com sucesso."
+        "Nuvemshop conectada."
       );
 
       console.log(
-        "Store ID identificado:",
+        "Store ID:",
         storeId
       );
 
       console.log(
-        "Webhooks:",
-        webhooks
+        `Produtos sincronizados: ${produtos.length}`
       );
 
       return res.send(`
         <html>
-
           <body style="
             margin:0;
             background:#070707;
@@ -1262,11 +1642,7 @@ app.get(
               </h2>
 
               <p>
-                Integração autorizada.
-              </p>
-
-              <p>
-                Webhooks configurados.
+                Integração multi-produto ativa.
               </p>
 
               <p>
@@ -1274,10 +1650,14 @@ app.get(
                 ${storeId}
               </p>
 
+              <p>
+                Produtos sincronizados:
+                ${produtos.length}
+              </p>
+
             </div>
 
           </body>
-
         </html>
       `);
 
@@ -1291,7 +1671,7 @@ app.get(
       return res
         .status(500)
         .send(
-          "Erro interno."
+          `Erro interno: ${error.message}`
         );
     }
   }
@@ -1299,7 +1679,147 @@ app.get(
 
 /*
 |--------------------------------------------------------------------------
-| WEBHOOK PEDIDOS
+| WEBHOOK DE PRODUTOS
+|--------------------------------------------------------------------------
+|
+| Quando um produto for criado ou atualizado,
+| garantimos automaticamente o lote dele.
+|--------------------------------------------------------------------------
+*/
+
+app.post(
+  "/webhooks/products",
+  (req, res) => {
+
+    /*
+    Responde rápido para a Nuvemshop.
+    */
+
+    res.sendStatus(200);
+
+    const payload =
+      req.body || {};
+
+    const storeId =
+      Number(
+        payload.store_id
+      );
+
+    const productId =
+      Number(
+        payload.id
+      );
+
+    const event =
+      payload.event;
+
+    console.log(
+      "Webhook produto recebido:",
+      {
+        storeId,
+        productId,
+        event
+      }
+    );
+
+    if (
+      !storeId ||
+      !productId
+    ) {
+
+      console.error(
+        "Webhook de produto incompleto."
+      );
+
+      return;
+    }
+
+    /*
+    Processa fora da resposta do webhook.
+    */
+
+    (async () => {
+
+      try {
+
+        const store =
+          await buscarLoja(
+            storeId
+          );
+
+        if (!store) {
+
+          throw new Error(
+            `Loja ${storeId} não autorizada.`
+          );
+        }
+
+        const product =
+          await buscarProduto(
+            storeId,
+            store.access_token,
+            productId
+          );
+
+        if (!product) {
+          return;
+        }
+
+        /*
+        Se estiver publicado, cria/atualiza lote.
+        */
+
+        if (
+          product.published !== false
+        ) {
+
+          const nome =
+            normalizarNomeProduto(
+              product.name
+            );
+
+          const lote =
+            await garantirLote(
+              storeId,
+              productId,
+              nome
+            );
+
+          console.log(
+            `Produto sincronizado: ${nome} (${productId})`
+          );
+
+          console.log(
+            `Contador: ${lote.current_quantity}/${lote.target_quantity}`
+          );
+
+        } else {
+
+          /*
+          Produto despublicado não é apagado.
+          Apenas preservamos os dados históricos.
+          */
+
+          console.log(
+            `Produto ${productId} não está publicado.`
+          );
+        }
+
+      } catch (error) {
+
+        console.error(
+          "Erro webhook produto:",
+          error.message
+        );
+      }
+
+    })();
+  }
+);
+
+/*
+|--------------------------------------------------------------------------
+| WEBHOOK DE PEDIDOS
 |--------------------------------------------------------------------------
 */
 
@@ -1330,7 +1850,7 @@ app.post(
       payload.event;
 
     console.log(
-      "Webhook recebido:",
+      "Webhook pedido recebido:",
       {
         storeId,
         orderId,
@@ -1351,9 +1871,8 @@ app.post(
     }
 
     if (
-      !WEBHOOK_EVENTS.includes(
-        event
-      )
+      event !== "order/created" &&
+      event !== "order/updated"
     ) {
       return;
     }
@@ -1365,56 +1884,39 @@ app.post(
       (error) => {
 
         console.error(
-          "Erro processamento webhook:",
+          "Erro processamento pedido:",
           error.message
         );
       }
     );
   }
-);/*
+);
+
+/*
 |--------------------------------------------------------------------------
-| REPROCESSAR PEDIDO
+| SINCRONIZAR PRODUTOS MANUALMENTE
+|--------------------------------------------------------------------------
+|
+| Essa rota também é nosso botão de emergência.
+|
+| Abrir:
+|
+| /api/sync-products
+|
+| e todos os produtos publicados serão sincronizados.
 |--------------------------------------------------------------------------
 */
 
 app.get(
-  "/api/reprocess-order/:orderId",
+  "/api/sync-products",
   async (req, res) => {
 
     try {
 
-      const orderId =
-        Number(
-          req.params.orderId
-        );
+      const store =
+        await buscarUltimaLoja();
 
-      if (!orderId) {
-
-        return res
-          .status(400)
-          .json({
-            ok: false,
-            error:
-              "orderId inválido."
-          });
-      }
-
-      const storeResult =
-        await pool.query(`
-          SELECT
-            store_id
-
-          FROM nuvemshop_stores
-
-          ORDER BY
-            updated_at DESC
-
-          LIMIT 1
-        `);
-
-      if (
-        storeResult.rows.length === 0
-      ) {
+      if (!store) {
 
         return res
           .status(404)
@@ -1427,27 +1929,33 @@ app.get(
 
       const storeId =
         Number(
-          storeResult.rows[0]
-            .store_id
+          store.store_id
         );
 
-      const result =
-        await processarPedido(
+      const products =
+        await sincronizarProdutos(
           storeId,
-          orderId
+          store.access_token
         );
 
       return res.json({
         ok: true,
+
         storeId,
-        orderId,
-        result
+
+        total:
+          products.length,
+
+        targetDefault:
+          DEFAULT_TARGET,
+
+        products
       });
 
     } catch (error) {
 
       console.error(
-        "Erro reprocessamento:",
+        "Erro sincronizando produtos:",
         error.message
       );
 
@@ -1464,31 +1972,20 @@ app.get(
 
 /*
 |--------------------------------------------------------------------------
-| SETUP WEBHOOKS
+| LISTAR PRODUTOS / CONTADORES
 |--------------------------------------------------------------------------
 */
 
 app.get(
-  "/api/setup-webhooks",
+  "/api/products",
   async (req, res) => {
 
     try {
 
-      const stores =
-        await pool.query(`
-          SELECT
-            store_id,
-            access_token
+      const store =
+        await buscarUltimaLoja();
 
-          FROM nuvemshop_stores
-
-          ORDER BY
-            updated_at DESC
-        `);
-
-      if (
-        stores.rows.length === 0
-      ) {
+      if (!store) {
 
         return res
           .status(404)
@@ -1499,50 +1996,104 @@ app.get(
           });
       }
 
-      const results = [];
-
-      for (
-        const store
-        of stores.rows
-      ) {
-
-        const storeId =
-          Number(
-            store.store_id
-          );
-
-        const result =
-          await configurarWebhooks(
-            storeId,
-            store.access_token
-          );
-
-        await garantirLote(
-          storeId
+      const storeId =
+        Number(
+          store.store_id
         );
 
-        results.push({
-          storeId,
-          webhooks:
-            result
-        });
-      }
+      const result =
+        await pool.query(
+          `
+            SELECT
+              id,
+              store_id,
+              product_id,
+              nome,
+              current_quantity,
+              target_quantity,
+              active,
+              updated_at
+
+            FROM lotes
+
+            WHERE
+              store_id = $1
+              AND active = TRUE
+
+            ORDER BY
+              created_at ASC,
+              id ASC
+          `,
+          [
+            storeId
+          ]
+        );
 
       return res.json({
         ok: true,
 
-        webhookUrl:
-          WEBHOOK_URL,
+        storeId,
 
-        results
+        total:
+          result.rows.length,
+
+        products:
+          result.rows.map(
+            (lote) => {
+
+              const current =
+                Number(
+                  lote.current_quantity
+                );
+
+              const target =
+                Number(
+                  lote.target_quantity
+                );
+
+              return {
+                id:
+                  lote.id,
+
+                productId:
+                  Number(
+                    lote.product_id
+                  ),
+
+                name:
+                  lote.nome,
+
+                current,
+
+                target,
+
+                remaining:
+                  Math.max(
+                    target - current,
+                    0
+                  ),
+
+                percentage:
+                  target > 0
+                    ? Math.min(
+                        Math.round(
+                          (
+                            current /
+                            target
+                          ) * 100
+                        ),
+                        100
+                      )
+                    : 0,
+
+                closed:
+                  current >= target
+              };
+            }
+          )
       });
 
     } catch (error) {
-
-      console.error(
-        "Erro setup-webhooks:",
-        error.message
-      );
 
       return res
         .status(500)
@@ -1557,44 +2108,40 @@ app.get(
 
 /*
 |--------------------------------------------------------------------------
-| API LOTE
+| API LOTE POR PRODUTO
+|--------------------------------------------------------------------------
+|
+| Agora o frontend poderá pedir:
+|
+| /api/lote/362509901
+|
+| e futuramente:
+|
+| /api/lote/OUTRO_PRODUCT_ID
 |--------------------------------------------------------------------------
 */
 
 app.get(
-  "/api/lote",
+  "/api/lote/:productId",
   async (req, res) => {
 
     try {
 
-      /*
-      CORS explícito também nesta rota.
-      */
+      const productId =
+        Number(
+          req.params.productId
+        );
 
-      res.setHeader(
-        "Access-Control-Allow-Origin",
-        "*"
-      );
+      if (!productId) {
 
-      /*
-      Não deixa navegador/CDN guardar
-      valor antigo do contador.
-      */
-
-      res.setHeader(
-        "Cache-Control",
-        "no-store, no-cache, must-revalidate, proxy-revalidate"
-      );
-
-      res.setHeader(
-        "Pragma",
-        "no-cache"
-      );
-
-      res.setHeader(
-        "Expires",
-        "0"
-      );
+        return res
+          .status(400)
+          .json({
+            ok: false,
+            error:
+              "productId inválido."
+          });
+      }
 
       const result =
         await pool.query(
@@ -1619,7 +2166,7 @@ app.get(
             LIMIT 1
           `,
           [
-            PRODUCT_ID
+            productId
           ]
         );
 
@@ -1632,7 +2179,8 @@ app.get(
           .json({
             ok: false,
             error:
-              "Lote não configurado."
+              "Lote não configurado.",
+            productId
           });
       }
 
@@ -1675,10 +2223,180 @@ app.get(
           lote.id,
 
         storeId:
-          lote.store_id,
+          Number(
+            lote.store_id
+          ),
 
         productId:
-          lote.product_id,
+          Number(
+            lote.product_id
+          ),
+
+        name:
+          lote.nome,
+
+        current,
+
+        target,
+
+        remaining,
+
+        percentage,
+
+        closed:
+          current >= target
+      });
+
+    } catch (error) {
+
+      return res
+        .status(500)
+        .json({
+          ok: false,
+          error:
+            error.message
+        });
+    }
+  }
+);/*
+|--------------------------------------------------------------------------
+| API LOTE - COMPATIBILIDADE
+|--------------------------------------------------------------------------
+|
+| Mantemos /api/lote funcionando para o frontend antigo.
+|
+| Enquanto não alteramos o store.js.tpl, essa rota devolve
+| o lote atualizado mais recentemente.
+|--------------------------------------------------------------------------
+*/
+
+app.get(
+  "/api/lote",
+  async (req, res) => {
+
+    try {
+
+      res.setHeader(
+        "Cache-Control",
+        "no-store, no-cache, must-revalidate, proxy-revalidate"
+      );
+
+      res.setHeader(
+        "Pragma",
+        "no-cache"
+      );
+
+      res.setHeader(
+        "Expires",
+        "0"
+      );
+
+      const store =
+        await buscarUltimaLoja();
+
+      if (!store) {
+
+        return res
+          .status(404)
+          .json({
+            ok: false,
+            error:
+              "Nenhuma loja autorizada."
+          });
+      }
+
+      const storeId =
+        Number(
+          store.store_id
+        );
+
+      const result =
+        await pool.query(
+          `
+            SELECT
+              id,
+              store_id,
+              product_id,
+              nome,
+              current_quantity,
+              target_quantity
+
+            FROM lotes
+
+            WHERE
+              store_id = $1
+              AND active = TRUE
+
+            ORDER BY
+              updated_at DESC
+
+            LIMIT 1
+          `,
+          [
+            storeId
+          ]
+        );
+
+      if (
+        result.rows.length === 0
+      ) {
+
+        return res
+          .status(404)
+          .json({
+            ok: false,
+            error:
+              "Nenhum lote configurado."
+          });
+      }
+
+      const lote =
+        result.rows[0];
+
+      const current =
+        Number(
+          lote.current_quantity
+        );
+
+      const target =
+        Number(
+          lote.target_quantity
+        );
+
+      const remaining =
+        Math.max(
+          target - current,
+          0
+        );
+
+      const percentage =
+        target > 0
+          ? Math.min(
+              Math.round(
+                (
+                  current /
+                  target
+                ) * 100
+              ),
+              100
+            )
+          : 0;
+
+      return res.json({
+        ok: true,
+
+        id:
+          lote.id,
+
+        storeId:
+          Number(
+            lote.store_id
+          ),
+
+        productId:
+          Number(
+            lote.product_id
+          ),
 
         name:
           lote.nome,
@@ -1698,7 +2416,7 @@ app.get(
     } catch (error) {
 
       console.error(
-        "Erro lote:",
+        "Erro lote compatibilidade:",
         error.message
       );
 
@@ -1715,32 +2433,36 @@ app.get(
 
 /*
 |--------------------------------------------------------------------------
-| TESTAR PRODUTOS NUVEMSHOP
+| REPROCESSAR PEDIDO
 |--------------------------------------------------------------------------
 */
 
 app.get(
-  "/api/products-test",
+  "/api/reprocess-order/:orderId",
   async (req, res) => {
 
     try {
 
-      const storeResult =
-        await pool.query(`
-          SELECT
-            store_id,
-            access_token
+      const orderId =
+        Number(
+          req.params.orderId
+        );
 
-          FROM nuvemshop_stores
+      if (!orderId) {
 
-          ORDER BY updated_at DESC
+        return res
+          .status(400)
+          .json({
+            ok: false,
+            error:
+              "orderId inválido."
+          });
+      }
 
-          LIMIT 1
-        `);
+      const store =
+        await buscarUltimaLoja();
 
-      if (
-        storeResult.rows.length === 0
-      ) {
+      if (!store) {
 
         return res
           .status(404)
@@ -1753,90 +2475,26 @@ app.get(
 
       const storeId =
         Number(
-          storeResult.rows[0].store_id
+          store.store_id
         );
 
-      const accessToken =
-        storeResult.rows[0].access_token;
-
-      const response =
-        await fetch(
-          `${API_BASE}/${storeId}/products?per_page=30`,
-          {
-            method: "GET",
-
-            headers:
-              apiHeaders(accessToken)
-          }
+      const result =
+        await processarPedido(
+          storeId,
+          orderId
         );
-
-      const responseText =
-        await response.text();
-
-      if (!response.ok) {
-
-        console.error(
-          "Erro produtos Nuvemshop:",
-          response.status,
-          responseText
-        );
-
-        return res
-          .status(response.status)
-          .json({
-            ok: false,
-
-            status:
-              response.status,
-
-            error:
-              responseText
-          });
-      }
-
-      const products =
-        responseText
-          ? JSON.parse(responseText)
-          : [];
 
       return res.json({
         ok: true,
-
         storeId,
-
-        total:
-          Array.isArray(products)
-            ? products.length
-            : 0,
-
-        products:
-          Array.isArray(products)
-            ? products.map(
-                (product) => ({
-                  id:
-                    product.id,
-
-                  name:
-                    product.name,
-
-                  published:
-                    product.published,
-
-                  variants:
-                    Array.isArray(
-                      product.variants
-                    )
-                      ? product.variants.length
-                      : 0
-                })
-              )
-            : []
+        orderId,
+        result
       });
 
     } catch (error) {
 
       console.error(
-        "Erro products-test:",
+        "Erro reprocessamento:",
         error.message
       );
 
@@ -1844,7 +2502,67 @@ app.get(
         .status(500)
         .json({
           ok: false,
+          error:
+            error.message
+        });
+    }
+  }
+);
 
+/*
+|--------------------------------------------------------------------------
+| CONFIGURAR WEBHOOKS MANUALMENTE
+|--------------------------------------------------------------------------
+*/
+
+app.get(
+  "/api/setup-webhooks",
+  async (req, res) => {
+
+    try {
+
+      const store =
+        await buscarUltimaLoja();
+
+      if (!store) {
+
+        return res
+          .status(404)
+          .json({
+            ok: false,
+            error:
+              "Nenhuma loja autorizada."
+          });
+      }
+
+      const storeId =
+        Number(
+          store.store_id
+        );
+
+      const webhooks =
+        await configurarWebhooks(
+          storeId,
+          store.access_token
+        );
+
+      return res.json({
+        ok: true,
+        storeId,
+        webhooks
+      });
+
+    } catch (error) {
+
+      console.error(
+        "Erro setup-webhooks:",
+        error.message
+      );
+
+      return res
+        .status(500)
+        .json({
+          ok: false,
           error:
             error.message
         });
@@ -1864,38 +2582,40 @@ app.get(
 
     try {
 
-      const result =
+      const store =
+        await buscarUltimaLoja();
+
+      const lotes =
         await pool.query(`
-          SELECT
-            store_id,
-            updated_at
-
-          FROM nuvemshop_stores
-
-          ORDER BY
-            updated_at DESC
-
-          LIMIT 1
+          SELECT COUNT(*)::INTEGER AS total
+          FROM lotes
+          WHERE active = TRUE
         `);
 
       return res.json({
         ok: true,
 
         nuvemshopConnected:
-          result.rows.length > 0,
+          Boolean(store),
 
         storeId:
-          result.rows[0]
-            ?.store_id ??
-          null,
+          store
+            ? Number(store.store_id)
+            : null,
 
-        productId:
-          PRODUCT_ID,
+        multiProduct:
+          true,
 
-        target:
-          TARGET,
+        targetDefault:
+          DEFAULT_TARGET,
 
-        cors: true
+        activeProducts:
+          Number(
+            lotes.rows[0]?.total || 0
+          ),
+
+        cors:
+          true
       });
 
     } catch (error) {
@@ -1953,9 +2673,60 @@ app.listen(
   async () => {
 
     console.log(
-      `STAGE 72 rodando na porta ${PORT}`
+      `STAGE 72 multi-produto rodando na porta ${PORT}`
     );
 
-    await prepararBanco();
+    try {
+
+      await prepararBanco();
+
+      /*
+      Se já existe uma loja autorizada,
+      sincroniza os produtos no boot.
+      */
+
+      const store =
+        await buscarUltimaLoja();
+
+      if (store) {
+
+        try {
+
+          const storeId =
+            Number(
+              store.store_id
+            );
+
+          const products =
+            await sincronizarProdutos(
+              storeId,
+              store.access_token
+            );
+
+          console.log(
+            `Inicialização: ${products.length} produto(s) sincronizado(s).`
+          );
+
+        } catch (error) {
+
+          /*
+          O servidor continua online mesmo
+          se a Nuvemshop estiver indisponível.
+          */
+
+          console.error(
+            "Falha na sincronização inicial:",
+            error.message
+          );
+        }
+      }
+
+    } catch (error) {
+
+      console.error(
+        "Erro na inicialização:",
+        error.message
+      );
+    }
   }
 );
