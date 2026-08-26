@@ -2249,7 +2249,10 @@ FROM lotes
         percentage,
 
         closed:
-          current >= target
+  current >= target,
+
+endAt:
+  lote.end_at
       });
 
     } catch (error) {
