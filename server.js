@@ -2147,14 +2147,16 @@ app.get(
         await pool.query(
           `
             SELECT
-              id,
-              store_id,
-              product_id,
-              nome,
-              current_quantity,
-              target_quantity
+    id,
+    store_id,
+    product_id,
+    nome,
+    current_quantity,
+    target_quantity,
+    created_at,
+    created_at + INTERVAL '72 hours' AS end_at
 
-            FROM lotes
+FROM lotes
 
             WHERE
               product_id = $1
