@@ -1287,35 +1287,46 @@ async function processarPedido(
       */
 
       const updated =
-        await client.query(
-          `
-            UPDATE lotes
+  await client.query(
+    `
+      UPDATE lotes
 
-            SET
-              current_quantity =
-                LEAST(
-                  current_quantity + $1,
-                  target_quantity
-                ),
+      SET
+        current_quantity =
+          LEAST(
+            current_quantity + $1,
+            target_quantity
+          ),
 
-              updated_at =
-                NOW()
+        closed_at =
+          CASE
+            WHEN
+              current_quantity + $1 >= target_quantity
+              AND closed_at IS NULL
+            THEN NOW()
+            ELSE closed_at
+          END,
 
-            WHERE id = $2
+        updated_at =
+          NOW()
 
-            RETURNING
-              id,
-              product_id,
-              nome,
-              current_quantity,
-              target_quantity
-          `,
-          [
-            item.quantity,
-            lote.id
-          ]
-        );
+      WHERE id = $2
 
+      RETURNING
+        id,
+        product_id,
+        nome,
+        current_quantity,
+        target_quantity,
+        closed_at,
+        reopened,
+        reopened_at
+    `,
+    [
+      item.quantity,
+      lote.id
+    ]
+  );
       updates.push({
         productId,
 
