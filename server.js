@@ -2444,17 +2444,25 @@ app.get(
       }
 
       const result =
-        await pool.query(
-          `
-            SELECT
-    id,
-    store_id,
-    product_id,
-    nome,
-    current_quantity,
-    target_quantity,
-    created_at,
-    created_at + INTERVAL '72 hours' AS end_at
+  await pool.query(
+    `
+      SELECT
+        id,
+        store_id,
+        product_id,
+        nome,
+        current_quantity,
+        target_quantity,
+        created_at,
+        reopened,
+        reopened_at,
+
+        CASE
+          WHEN reopened = TRUE
+               AND reopened_at IS NOT NULL
+          THEN reopened_at + INTERVAL '24 hours'
+          ELSE created_at + INTERVAL '72 hours'
+        END AS end_at
 
 FROM lotes
 
