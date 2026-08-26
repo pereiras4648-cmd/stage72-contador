@@ -286,10 +286,30 @@ await pool.query(`
     `);
 
     await pool.query(`
-      ALTER TABLE pedidos_processados
-      ADD COLUMN IF NOT EXISTS quantity
-      INTEGER NOT NULL DEFAULT 0
-    `);
+  ALTER TABLE pedidos_processados
+  ADD COLUMN IF NOT EXISTS quantity
+  INTEGER NOT NULL DEFAULT 0
+`);
+
+await pool.query(`
+  CREATE TABLE IF NOT EXISTS pedido_itens_processados (
+    id SERIAL PRIMARY KEY,
+    order_id BIGINT NOT NULL,
+    store_id BIGINT NOT NULL,
+    product_id BIGINT NOT NULL,
+    quantity INTEGER NOT NULL DEFAULT 0,
+    reversed_quantity INTEGER NOT NULL DEFAULT 0,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE (order_id, product_id)
+  )
+`);
+
+/*
+A coluna product_id antiga pode continuar existindo.
+Não precisamos apagá-la para não correr risco
+com dados históricos.
+*/
 
     /*
     A coluna product_id antiga pode continuar existindo.
