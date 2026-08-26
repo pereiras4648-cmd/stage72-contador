@@ -236,10 +236,30 @@ async function prepararBanco() {
     `);
 
     await pool.query(`
-      ALTER TABLE lotes
-      ADD COLUMN IF NOT EXISTS active
-      BOOLEAN NOT NULL DEFAULT TRUE
-    `);
+  ALTER TABLE lotes
+  ADD COLUMN IF NOT EXISTS active
+  BOOLEAN NOT NULL DEFAULT TRUE
+`);
+
+await pool.query(`
+  ALTER TABLE lotes
+  ADD COLUMN IF NOT EXISTS reopened
+  BOOLEAN NOT NULL DEFAULT FALSE
+`);
+
+await pool.query(`
+  ALTER TABLE lotes
+  ADD COLUMN IF NOT EXISTS reopened_at
+  TIMESTAMPTZ
+`);
+
+await pool.query(`
+  ALTER TABLE lotes
+  ADD COLUMN IF NOT EXISTS closed_at
+  TIMESTAMPTZ
+`);
+
+/*
 
     /*
     |--------------------------------------------------------------------------
