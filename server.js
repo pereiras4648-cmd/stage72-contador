@@ -1128,16 +1128,144 @@ async function processarPedido(
 
   if (jaProcessado) {
 
-    console.log(
-      `Pedido ${orderId} já processado. Estado atual será analisado.`
-    );
+  /*
+  |--------------------------------------------------------------------------
+  | PEDIDO CANCELADO
+  |--------------------------------------------------------------------------
+  */
 
-    return {
-      processed: false,
-      reason:
-        "already_processed_debug"
-    };
+  if (order.status === "cancelled") {
+
+    const client =
+      await pool.connect();
+
+    try {
+
+      await client.query("BEGIN");
+
+      const itens =
+        await client.query(
+          `
+            SELECT
+              product_id,
+              quantity,
+              reversed_quantity
+
+            FROM pedido_itens_processados
+
+            WHERE order_id = $1
+          `,
+          [
+            orderId
+          ]
+        );
+
+      for (const item of itens.rows) {
+
+        const quantity =
+          Number(item.quantity || 0);
+
+        const reversed =
+          Number(
+            item.reversed_quantity || 0
+          );
+
+        const devolver =
+          Math.max(
+            quantity - reversed,
+            0
+          );
+
+        if (devolver <= 0) {
+          continue;
+        }
+
+        await client.query(
+          `
+            UPDATE lotes
+
+            SET
+              current_quantity =
+                GREATEST(
+                  current_quantity - $1,
+                  0
+                ),
+
+              updated_at =
+                NOW()
+
+            WHERE
+              store_id = $2
+              AND product_id = $3
+          `,
+          [
+            devolver,
+            storeId,
+            Number(item.product_id)
+          ]
+        );
+
+        await client.query(
+          `
+            UPDATE pedido_itens_processados
+
+            SET
+              reversed_quantity =
+                quantity,
+
+              updated_at =
+                NOW()
+
+            WHERE
+              order_id = $1
+              AND product_id = $2
+          `,
+          [
+            orderId,
+            Number(item.product_id)
+          ]
+        );
+      }
+
+      await client.query("COMMIT");
+
+      console.log(
+        `Pedido ${orderId} cancelado e revertido.`
+      );
+
+      return {
+        processed: true,
+        reason:
+          "cancelled_reversed"
+      };
+
+    } catch (error) {
+
+      await client.query("ROLLBACK");
+
+      throw error;
+
+    } finally {
+
+      client.release();
+    }
   }
+
+  /*
+  Pedido já processado, mas não está cancelado.
+  Não soma novamente.
+  */
+
+  console.log(
+    `Pedido ${orderId} já processado.`
+  );
+
+  return {
+    processed: false,
+    reason:
+      "already_processed"
+  };
+}
   if (
     order.payment_status !== "paid"
   ) {
