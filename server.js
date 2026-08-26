@@ -257,8 +257,7 @@ async function buscarLoja(storeId) {
 async function garantirLote(storeId) {
 
   const existing =
-    await pool.query(
-      `
+    await pool.query(      `
         SELECT *
 
         FROM lotes
@@ -659,8 +658,7 @@ async function processarPedido(
       `Pedido ${orderId} não contém produto ${PRODUCT_ID}.`
     );
 
-    await pool.query(
-      `
+    await pool.query(      `
         INSERT INTO pedidos_processados (
           order_id,
           store_id,
@@ -1373,9 +1371,7 @@ app.post(
       }
     );
   }
-);
-
-/*
+);/*
 |--------------------------------------------------------------------------
 | REPROCESSAR PEDIDO
 |--------------------------------------------------------------------------
@@ -1710,6 +1706,145 @@ app.get(
         .status(500)
         .json({
           ok: false,
+          error:
+            error.message
+        });
+    }
+  }
+);
+
+/*
+|--------------------------------------------------------------------------
+| TESTAR PRODUTOS NUVEMSHOP
+|--------------------------------------------------------------------------
+*/
+
+app.get(
+  "/api/products-test",
+  async (req, res) => {
+
+    try {
+
+      const storeResult =
+        await pool.query(`
+          SELECT
+            store_id,
+            access_token
+
+          FROM nuvemshop_stores
+
+          ORDER BY updated_at DESC
+
+          LIMIT 1
+        `);
+
+      if (
+        storeResult.rows.length === 0
+      ) {
+
+        return res
+          .status(404)
+          .json({
+            ok: false,
+            error:
+              "Nenhuma loja autorizada."
+          });
+      }
+
+      const storeId =
+        Number(
+          storeResult.rows[0].store_id
+        );
+
+      const accessToken =
+        storeResult.rows[0].access_token;
+
+      const response =
+        await fetch(
+          `${API_BASE}/${storeId}/products?per_page=30`,
+          {
+            method: "GET",
+
+            headers:
+              apiHeaders(accessToken)
+          }
+        );
+
+      const responseText =
+        await response.text();
+
+      if (!response.ok) {
+
+        console.error(
+          "Erro produtos Nuvemshop:",
+          response.status,
+          responseText
+        );
+
+        return res
+          .status(response.status)
+          .json({
+            ok: false,
+
+            status:
+              response.status,
+
+            error:
+              responseText
+          });
+      }
+
+      const products =
+        responseText
+          ? JSON.parse(responseText)
+          : [];
+
+      return res.json({
+        ok: true,
+
+        storeId,
+
+        total:
+          Array.isArray(products)
+            ? products.length
+            : 0,
+
+        products:
+          Array.isArray(products)
+            ? products.map(
+                (product) => ({
+                  id:
+                    product.id,
+
+                  name:
+                    product.name,
+
+                  published:
+                    product.published,
+
+                  variants:
+                    Array.isArray(
+                      product.variants
+                    )
+                      ? product.variants.length
+                      : 0
+                })
+              )
+            : []
+      });
+
+    } catch (error) {
+
+      console.error(
+        "Erro products-test:",
+        error.message
+      );
+
+      return res
+        .status(500)
+        .json({
+          ok: false,
+
           error:
             error.message
         });
