@@ -1181,29 +1181,49 @@ async function processarPedido(
         }
 
         await client.query(
-          `
-            UPDATE lotes
+  `
+    UPDATE lotes
 
-            SET
-              current_quantity =
-                GREATEST(
-                  current_quantity - $1,
-                  0
-                ),
+    SET
+      current_quantity =
+        GREATEST(
+          current_quantity - $1,
+          0
+        ),
 
-              updated_at =
-                NOW()
+      reopened =
+        CASE
+          WHEN
+            current_quantity >= target_quantity
+            AND GREATEST(current_quantity - $1, 0) < target_quantity
+            AND reopened = FALSE
+          THEN TRUE
+          ELSE reopened
+        END,
 
-            WHERE
-              store_id = $2
-              AND product_id = $3
-          `,
-          [
-            devolver,
-            storeId,
-            Number(item.product_id)
-          ]
-        );
+      reopened_at =
+        CASE
+          WHEN
+            current_quantity >= target_quantity
+            AND GREATEST(current_quantity - $1, 0) < target_quantity
+            AND reopened = FALSE
+          THEN NOW()
+          ELSE reopened_at
+        END,
+
+      updated_at =
+        NOW()
+
+    WHERE
+      store_id = $2
+      AND product_id = $3
+  `,
+  [
+    devolver,
+    storeId,
+    Number(item.product_id)
+  ]
+);
 
         await client.query(
           `
