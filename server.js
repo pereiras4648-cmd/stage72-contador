@@ -2087,7 +2087,10 @@ app.get(
                     : 0,
 
                 closed:
-                  current >= target
+  current >= target,
+
+endAt:
+  lote.end_at
               };
             }
           )
