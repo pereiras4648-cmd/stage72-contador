@@ -1311,7 +1311,44 @@ async function processarPedido(
     `
       UPDATE lotes
 
-     await client.query(
+      SET
+        current_quantity =
+          LEAST(
+            current_quantity + $1,
+            target_quantity
+          ),
+
+        closed_at =
+          CASE
+            WHEN
+              current_quantity + $1 >= target_quantity
+              AND closed_at IS NULL
+            THEN NOW()
+            ELSE closed_at
+          END,
+
+        updated_at =
+          NOW()
+
+      WHERE id = $2
+
+      RETURNING
+        id,
+        product_id,
+        nome,
+        current_quantity,
+        target_quantity,
+        closed_at,
+        reopened,
+        reopened_at
+    `,
+    [
+      item.quantity,
+      lote.id
+    ]
+  );
+
+await client.query(
   `
     INSERT INTO pedido_itens_processados (
       order_id,
@@ -1344,9 +1381,8 @@ async function processarPedido(
     item.quantity
   ]
 );
-
-      updates.push({
-        productId,
+        updates.push({
+    productId,
 
         quantity:
           item.quantity,
