@@ -1007,7 +1007,7 @@ async function processarPedido(
 
   /*
   |--------------------------------------------------------------------------
-  | JÁ PROCESSADO?
+  | VERIFICAR SE O PEDIDO JÁ FOI PROCESSADO
   |--------------------------------------------------------------------------
   */
 
@@ -1027,20 +1027,8 @@ async function processarPedido(
       ]
     );
 
-  if (
-    processed.rows.length > 0
-  ) {
-
-    console.log(
-      `Pedido ${orderId} já processado.`
-    );
-
-    return {
-      processed: false,
-      reason:
-        "already_processed"
-    };
-  }
+  const jaProcessado =
+    processed.rows.length > 0;
 
   const store =
     await buscarLoja(
@@ -1053,6 +1041,12 @@ async function processarPedido(
       `Loja ${storeId} não autorizada.`
     );
   }
+
+  /*
+  |--------------------------------------------------------------------------
+  | BUSCAR ESTADO ATUAL DO PEDIDO NA NUVEMSHOP
+  |--------------------------------------------------------------------------
+  */
 
   const order =
     await buscarPedido(
@@ -1073,6 +1067,77 @@ async function processarPedido(
     order.payment_status
   );
 
+  /*
+  |--------------------------------------------------------------------------
+  | DEBUG CANCELAMENTO
+  |--------------------------------------------------------------------------
+  */
+
+  console.log(
+    `STAGE 72 DEBUG PEDIDO ${orderId}:`,
+    {
+      jaProcessado:
+        jaProcessado,
+
+      payment_status:
+        order.payment_status,
+
+      status:
+        order.status,
+
+      shipping_status:
+        order.shipping_status,
+
+      cancelled_at:
+        order.cancelled_at,
+
+      canceled_at:
+        order.canceled_at,
+
+      closed_at:
+        order.closed_at
+    }
+  );
+
+  /*
+  |--------------------------------------------------------------------------
+  | PEDIDO NOVO AINDA NÃO PAGO
+  |--------------------------------------------------------------------------
+  */
+
+  if (
+    !jaProcessado &&
+    order.payment_status !== "paid"
+  ) {
+
+    return {
+      processed: false,
+      reason:
+        "not_paid"
+    };
+  }
+
+  /*
+  |--------------------------------------------------------------------------
+  | PEDIDO JÁ PROCESSADO
+  |
+  | Por enquanto apenas deixamos o status aparecer nos logs.
+  | No próximo passo entra a reversão do cancelamento.
+  |--------------------------------------------------------------------------
+  */
+
+  if (jaProcessado) {
+
+    console.log(
+      `Pedido ${orderId} já processado. Estado atual será analisado.`
+    );
+
+    return {
+      processed: false,
+      reason:
+        "already_processed_debug"
+    };
+  }
   if (
     order.payment_status !== "paid"
   ) {
