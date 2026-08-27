@@ -1087,13 +1087,14 @@ async function processarPedido(
   }
 
   /*
-  |--------------------------------------------------------------------------
-  | PEDIDO JÁ PROCESSADO
-  |
-  | Por enquanto apenas deixamos o status aparecer nos logs.
-  | No próximo passo entra a reversão do cancelamento.
-  |--------------------------------------------------------------------------
-  */
+|--------------------------------------------------------------------------
+| PEDIDO JÁ PROCESSADO
+|--------------------------------------------------------------------------
+|
+| Se estiver cancelado, reverte as quantidades do pedido.
+| Caso contrário, não processa novamente.
+|--------------------------------------------------------------------------
+*/
 
   if (jaProcessado) {
 
