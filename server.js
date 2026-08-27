@@ -2610,6 +2610,110 @@ return res.json({
 
 /*
 |--------------------------------------------------------------------------
+| STAGE 72 - PRODUTOS DO PAINEL ADMIN
+|--------------------------------------------------------------------------
+*/
+
+app.get(
+  "/api/admin/products",
+  async (req, res) => {
+
+    const adminKey =
+      req.headers["x-stage72-admin-key"];
+
+    if (
+      !process.env.STAGE72_ADMIN_KEY ||
+      adminKey !== process.env.STAGE72_ADMIN_KEY
+    ) {
+      return res
+        .status(401)
+        .json({
+          ok: false,
+          error: "Não autorizado"
+        });
+    }
+
+    try {
+
+      const store =
+        await buscarUltimaLoja();
+
+      if (!store) {
+        return res
+          .status(404)
+          .json({
+            ok: false,
+            error:
+              "Nenhuma loja autorizada."
+          });
+      }
+
+      const storeId =
+        Number(
+          store.store_id
+        );
+
+      const products =
+        await listarProdutos(
+          storeId,
+          store.access_token
+        );
+
+      const publicados =
+        products
+          .filter(
+            (product) =>
+              product.published !== false
+          )
+          .map(
+            (product) => ({
+              id:
+                Number(
+                  product.id
+                ),
+
+              name:
+                normalizarNomeProduto(
+                  product.name
+                )
+            })
+          )
+          .sort(
+            (a, b) =>
+              a.name.localeCompare(
+                b.name,
+                "pt-BR"
+              )
+          );
+
+      return res.json({
+        ok: true,
+        total:
+          publicados.length,
+        products:
+          publicados
+      });
+
+    } catch (error) {
+
+      console.error(
+        "Erro carregando produtos do admin:",
+        error.message
+      );
+
+      return res
+        .status(500)
+        .json({
+          ok: false,
+          error:
+            error.message
+        });
+    }
+  }
+);
+
+/*
+|--------------------------------------------------------------------------
 | STAGE 72 - PAINEL ADMIN
 |--------------------------------------------------------------------------
 */
