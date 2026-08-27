@@ -2848,14 +2848,14 @@ select {
     </div>
 
     <label>
-      Product ID
-    </label>
+  Produto
+</label>
 
-    <input
-      id="productId"
-      type="number"
-      placeholder="Ex: 362509901"
-    >
+<select id="productId">
+  <option value="">
+    Informe a chave abaixo para carregar os produtos
+  </option>
+</select>
 
     <label>
   Produto
