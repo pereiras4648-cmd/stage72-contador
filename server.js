@@ -2858,16 +2858,6 @@ select {
 </select>
 
     <label>
-  Produto
-</label>
-
-<select id="productId">
-  <option value="">
-    Informe a chave abaixo para carregar os produtos
-  </option>
-</select>
-
-    <label>
       Chave administrativa
     </label>
 
