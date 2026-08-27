@@ -259,6 +259,12 @@ await pool.query(`
   TIMESTAMPTZ
 `);
 
+    await pool.query(`
+  ALTER TABLE lotes
+  ADD COLUMN IF NOT EXISTS final_closed
+  BOOLEAN NOT NULL DEFAULT FALSE
+`);
+    
 /*
 
     |--------------------------------------------------------------------------
