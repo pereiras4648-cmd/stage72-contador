@@ -2584,6 +2584,9 @@ closed:
 
 endAt:
   lote.end_at
+});
+
+} catch (error) {
 
     } catch (error) {
 
