@@ -3050,10 +3050,25 @@ async function carregarProdutos() {
         option.value =
           product.id;
 
-        option.textContent =
-          product.name +
-          " — ID " +
-          product.id;
+        if (product.lot) {
+
+  option.textContent =
+    product.name +
+    " — " +
+    product.lot.current +
+    "/" +
+    product.lot.target +
+    " — " +
+    product.lot.remainingHours +
+    "h restantes";
+
+} else {
+
+  option.textContent =
+    product.name +
+    " — Sem lote ativo";
+
+}
 
         productSelect.appendChild(
           option
