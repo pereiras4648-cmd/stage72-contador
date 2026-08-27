@@ -2482,7 +2482,7 @@ app.get(
         CASE
           WHEN reopened = TRUE
                AND reopened_at IS NOT NULL
-          THEN reopened_at + INTERVAL '24 hours'
+          THEN reopened_at + INTERVAL '2 minutes'
           ELSE created_at + INTERVAL '72 hours'
         END AS end_at
 
