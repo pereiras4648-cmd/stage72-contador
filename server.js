@@ -2472,6 +2472,7 @@ app.get(
         created_at,
         reopened,
         reopened_at,
+        final_closed,
 
         CASE
           WHEN reopened = TRUE
