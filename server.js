@@ -1525,7 +1525,7 @@ async function processarPedido(
       desse produto.
       */
 
-      const updated =
+    const updated =
   await client.query(
     `
       UPDATE lotes
@@ -1546,6 +1546,15 @@ async function processarPedido(
             ELSE closed_at
           END,
 
+        final_closed =
+          CASE
+            WHEN
+              reopened = TRUE
+              AND current_quantity + $1 >= target_quantity
+            THEN TRUE
+            ELSE final_closed
+          END,
+
         updated_at =
           NOW()
 
@@ -1559,7 +1568,8 @@ async function processarPedido(
         target_quantity,
         closed_at,
         reopened,
-        reopened_at
+        reopened_at,
+        final_closed
     `,
     [
       item.quantity,
