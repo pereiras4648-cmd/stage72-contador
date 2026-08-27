@@ -2288,7 +2288,7 @@ app.get(
               current_quantity,
               target_quantity,
               active,
-              updated_at
+              updated_at,
               final_closed
 
             FROM lotes
