@@ -2857,6 +2857,17 @@ select {
   </option>
 </select>
 
+<label>
+  Meta do novo lote
+</label>
+
+<input
+  id="target"
+  type="number"
+  min="1"
+  placeholder="Ex: 12"
+>
+
     <label>
       Chave administrativa
     </label>
