@@ -2608,6 +2608,189 @@ return res.json({
   }
   );
 
+/*
+|--------------------------------------------------------------------------
+| STAGE 72 - PAINEL ADMIN
+|--------------------------------------------------------------------------
+*/
+
+app.get(
+  "/admin",
+  (req, res) => {
+
+    res.send(`
+<!DOCTYPE html>
+
+<html lang="pt-BR">
+
+<head>
+
+  <meta charset="UTF-8">
+
+  <meta
+    name="viewport"
+    content="width=device-width, initial-scale=1.0"
+  >
+
+  <title>STAGE 72 Admin</title>
+
+  <style>
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: #050505;
+      color: #ffffff;
+      font-family:
+        Arial,
+        Helvetica,
+        sans-serif;
+    }
+
+    .stage72-admin {
+      width: 100%;
+      max-width: 520px;
+      margin: 70px auto;
+      padding: 30px;
+    }
+
+    .logo {
+      font-size: 34px;
+      font-weight: 900;
+      letter-spacing: -2px;
+      margin-bottom: 8px;
+    }
+
+    .logo span {
+      color: #00e5ff;
+    }
+
+    .subtitle {
+      color: #888;
+      margin-bottom: 35px;
+    }
+
+    label {
+      display: block;
+      margin-top: 22px;
+      margin-bottom: 8px;
+      font-size: 13px;
+      font-weight: bold;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+
+    input {
+      width: 100%;
+      padding: 15px;
+      background: #111;
+      border: 1px solid #333;
+      border-radius: 6px;
+      color: white;
+      font-size: 16px;
+      outline: none;
+    }
+
+    input:focus {
+      border-color: #00e5ff;
+    }
+
+    button {
+      width: 100%;
+      margin-top: 30px;
+      padding: 17px;
+      border: 0;
+      border-radius: 6px;
+      background: #00e5ff;
+      color: #000;
+      font-size: 14px;
+      font-weight: 900;
+      cursor: pointer;
+    }
+
+    button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    #resultado {
+      margin-top: 25px;
+      padding: 15px;
+      border: 1px solid #222;
+      border-radius: 6px;
+      background: #0c0c0c;
+      display: none;
+      line-height: 1.5;
+    }
+
+  </style>
+
+</head>
+
+<body>
+
+  <div class="stage72-admin">
+
+    <div class="logo">
+      STAGE <span>72</span>
+    </div>
+
+    <div class="subtitle">
+      Gerenciamento de lotes
+    </div>
+
+    <label>
+      Product ID
+    </label>
+
+    <input
+      id="productId"
+      type="number"
+      placeholder="Ex: 362509901"
+    >
+
+    <label>
+      Meta do novo lote
+    </label>
+
+    <input
+      id="target"
+      type="number"
+      min="1"
+      placeholder="Ex: 15"
+    >
+
+    <label>
+      Chave administrativa
+    </label>
+
+    <input
+      id="adminKey"
+      type="password"
+      placeholder="STAGE72_ADMIN_KEY"
+    >
+
+    <button
+      id="criarLote"
+      type="button"
+    >
+      CRIAR NOVO LOTE
+    </button>
+
+    <div id="resultado"></div>
+
+  </div>
+
+</body>
+
+</html>
+    `);
+  }
+);
+
   /*
 |--------------------------------------------------------------------------
 | STAGE 72 - CRIAR NOVO LOTE
