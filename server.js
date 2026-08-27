@@ -2326,6 +2326,7 @@ app.get(
               target_quantity,
               active,
               updated_at
+              final_closed
 
             FROM lotes
 
@@ -2399,8 +2400,12 @@ app.get(
                       )
                     : 0,
 
-                closed:
-  current >= target,
+                finalClosed:
+  lote.final_closed === true,
+
+closed:
+  current >= target ||
+  lote.final_closed === true,
 
 endAt:
   lote.end_at
