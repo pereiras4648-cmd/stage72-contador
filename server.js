@@ -2890,8 +2890,108 @@ select {
   const botao =
     document.getElementById("criarLote");
 
-  const resultado =
-    document.getElementById("resultado");
+ const adminKeyInput =
+  document.getElementById("adminKey");
+
+const productSelect =
+  document.getElementById("productId");
+
+let stage72ProdutosCarregados =
+  false;
+
+async function carregarProdutos() {
+
+  const adminKey =
+    adminKeyInput.value.trim();
+
+  if (!adminKey) {
+    return;
+  }
+
+  productSelect.innerHTML =
+    '<option value="">Carregando produtos...</option>';
+
+  try {
+
+    const response =
+      await fetch(
+        "/api/admin/products",
+        {
+          headers: {
+            "x-stage72-admin-key":
+              adminKey
+          }
+        }
+      );
+
+    const data =
+      await response.json();
+
+    if (!response.ok) {
+      throw new Error(
+        data.error ||
+        "Erro ao carregar produtos."
+      );
+    }
+
+    productSelect.innerHTML =
+      '<option value="">Selecione um produto</option>';
+
+    data.products.forEach(
+      function (product) {
+
+        const option =
+          document.createElement(
+            "option"
+          );
+
+        option.value =
+          product.id;
+
+        option.textContent =
+          product.name +
+          " — ID " +
+          product.id;
+
+        productSelect.appendChild(
+          option
+        );
+      }
+    );
+
+    stage72ProdutosCarregados =
+      true;
+
+  } catch (error) {
+
+    productSelect.innerHTML =
+      '<option value="">Não foi possível carregar</option>';
+
+    resultado.style.display =
+      "block";
+
+    resultado.textContent =
+      "Erro: " +
+      error.message;
+  }
+}
+
+adminKeyInput.addEventListener(
+  "change",
+  carregarProdutos
+);
+
+adminKeyInput.addEventListener(
+  "blur",
+  function () {
+
+    if (
+      !stage72ProdutosCarregados
+    ) {
+      carregarProdutos();
+    }
+  }
+);
 
   botao.addEventListener(
     "click",
