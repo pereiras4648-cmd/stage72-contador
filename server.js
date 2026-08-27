@@ -1480,14 +1480,43 @@ async function processarPedido(
             ]
           );
 
-        lote =
-          created.rows[0];
-      }
+       lote =
+  created.rows[0];
+}
 
-      /*
-      Atualiza apenas o lote
-      desse produto.
-      */
+const agora =
+  Date.now();
+
+const inicioPrazo =
+  lote.reopened === true &&
+  lote.reopened_at
+    ? new Date(lote.reopened_at).getTime()
+    : new Date(lote.created_at).getTime();
+
+const duracaoPrazo =
+  lote.reopened === true
+    ? 24 * 60 * 60 * 1000
+    : 72 * 60 * 60 * 1000;
+
+const prazoEncerrado =
+  Number.isFinite(inicioPrazo) &&
+  agora >= inicioPrazo + duracaoPrazo;
+
+if (
+  lote.final_closed === true ||
+  prazoEncerrado
+) {
+  console.log(
+    `Produto ${productId} não contabilizado: lote encerrado.`
+  );
+
+  continue;
+}
+
+/*
+Atualiza apenas o lote
+desse produto.
+*/
 
     const updated =
   await client.query(
