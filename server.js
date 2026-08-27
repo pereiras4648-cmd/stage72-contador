@@ -2606,7 +2606,303 @@ return res.json({
         });
     }
   }
-);/*
+  );
+
+  /*
+|--------------------------------------------------------------------------
+| STAGE 72 - CRIAR NOVO LOTE
+|--------------------------------------------------------------------------
+*/
+
+app.post(
+  "/api/admin/lotes/new",
+  async (req, res) => {
+
+    const adminKey =
+      req.headers["x-stage72-admin-key"];
+
+    /*
+    |--------------------------------------------------------------------------
+    | PROTEÇÃO ADMINISTRATIVA
+    |--------------------------------------------------------------------------
+    */
+
+    if (
+      !process.env.STAGE72_ADMIN_KEY ||
+      adminKey !== process.env.STAGE72_ADMIN_KEY
+    ) {
+      return res
+        .status(401)
+        .json({
+          ok: false,
+          error: "Não autorizado"
+        });
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | DADOS DO NOVO LOTE
+    |--------------------------------------------------------------------------
+    */
+
+    const productId =
+      Number(
+        req.body?.productId
+      );
+
+    const target =
+      Number(
+        req.body?.target
+      );
+
+    /*
+    |--------------------------------------------------------------------------
+    | VALIDAÇÕES
+    |--------------------------------------------------------------------------
+    */
+
+    if (
+      !Number.isInteger(productId) ||
+      productId <= 0
+    ) {
+      return res
+        .status(400)
+        .json({
+          ok: false,
+          error:
+            "productId inválido"
+        });
+    }
+
+    if (
+      !Number.isInteger(target) ||
+      target <= 0
+    ) {
+      return res
+        .status(400)
+        .json({
+          ok: false,
+          error:
+            "Meta do lote inválida"
+        });
+    }
+
+    /*
+|--------------------------------------------------------------------------
+| CRIAR NOVO LOTE
+|--------------------------------------------------------------------------
+*/
+
+const store =
+  await buscarUltimaLoja();
+
+if (!store) {
+  return res
+    .status(404)
+    .json({
+      ok: false,
+      error:
+        "Nenhuma loja autorizada."
+    });
+}
+
+const storeId =
+  Number(store.store_id);
+
+const client =
+  await pool.connect();
+
+try {
+
+  await client.query(
+    "BEGIN"
+  );
+
+  /*
+  Desativa qualquer lote atual
+  desse produto.
+  */
+
+  await client.query(
+    `
+      UPDATE lotes
+
+      SET
+        active = FALSE,
+        updated_at = NOW()
+
+      WHERE
+        store_id = $1
+        AND product_id = $2
+        AND active = TRUE
+    `,
+    [
+      storeId,
+      productId
+    ]
+  );
+
+  /*
+  Busca o nome do produto.
+  */
+
+  let nome =
+    "Produto STAGE 72";
+
+  try {
+
+    const product =
+      await buscarProduto(
+        storeId,
+        store.access_token,
+        productId
+      );
+
+    if (
+      product &&
+      product.name
+    ) {
+      nome =
+        normalizarNomeProduto(
+          product.name
+        );
+    }
+
+  } catch (error) {
+
+    console.error(
+      `Não foi possível buscar nome do produto ${productId}:`,
+      error.message
+    );
+  }
+
+  /*
+  Cria o novo lote.
+  */
+
+  const created =
+    await client.query(
+      `
+        INSERT INTO lotes (
+          store_id,
+          product_id,
+          nome,
+          current_quantity,
+          target_quantity,
+          active,
+          reopened,
+          reopened_at,
+          closed_at,
+          final_closed,
+          created_at,
+          updated_at
+        )
+
+        VALUES (
+          $1,
+          $2,
+          $3,
+          0,
+          $4,
+          TRUE,
+          FALSE,
+          NULL,
+          NULL,
+          FALSE,
+          NOW(),
+          NOW()
+        )
+
+        RETURNING *
+      `,
+      [
+        storeId,
+        productId,
+        nome,
+        target
+      ]
+    );
+
+  await client.query(
+    "COMMIT"
+  );
+
+  const lote =
+    created.rows[0];
+
+  return res.json({
+    ok: true,
+    message:
+      "Novo lote criado.",
+    lote: {
+      id:
+        lote.id,
+
+      storeId:
+        Number(
+          lote.store_id
+        ),
+
+      productId:
+        Number(
+          lote.product_id
+        ),
+
+      name:
+        lote.nome,
+
+      current:
+        Number(
+          lote.current_quantity
+        ),
+
+      target:
+        Number(
+          lote.target_quantity
+        ),
+
+      active:
+        lote.active === true,
+
+      reopened:
+        lote.reopened === true,
+
+      finalClosed:
+        lote.final_closed === true,
+
+      createdAt:
+        lote.created_at
+    }
+  });
+
+} catch (error) {
+
+  try {
+    await client.query(
+      "ROLLBACK"
+    );
+  } catch (_) {}
+
+  console.error(
+    "Erro criando novo lote:",
+    error.message
+  );
+
+  return res
+    .status(500)
+    .json({
+      ok: false,
+      error:
+        error.message
+    });
+
+} finally {
+
+  client.release();
+}
+  }
+);
+/*
 |--------------------------------------------------------------------------
 | API LOTE - COMPATIBILIDADE
 |--------------------------------------------------------------------------
