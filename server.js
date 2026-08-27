@@ -1068,12 +1068,6 @@ async function processarPedido(
     );
   }
 
-  console.log(
-    `Pedido ${orderId} status de pagamento:`,
-    order.payment_status
-  );
-
-
   /*
   |--------------------------------------------------------------------------
   | PEDIDO NOVO AINDA NÃO PAGO
