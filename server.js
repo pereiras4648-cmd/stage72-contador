@@ -1073,37 +1073,6 @@ async function processarPedido(
     order.payment_status
   );
 
-  /*
-  |--------------------------------------------------------------------------
-  | DEBUG CANCELAMENTO
-  |--------------------------------------------------------------------------
-  */
-
-  console.log(
-    `STAGE 72 DEBUG PEDIDO ${orderId}:`,
-    {
-      jaProcessado:
-        jaProcessado,
-
-      payment_status:
-        order.payment_status,
-
-      status:
-        order.status,
-
-      shipping_status:
-        order.shipping_status,
-
-      cancelled_at:
-        order.cancelled_at,
-
-      canceled_at:
-        order.canceled_at,
-
-      closed_at:
-        order.closed_at
-    }
-  );
 
   /*
   |--------------------------------------------------------------------------
