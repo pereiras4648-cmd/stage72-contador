@@ -2659,6 +2659,29 @@ app.get(
           store.access_token
         );
 
+      const lotesAtivos =
+  await pool.query(
+    `
+      SELECT
+        product_id,
+        current_quantity,
+        target_quantity,
+        created_at,
+        reopened,
+        reopened_at,
+        final_closed
+
+      FROM lotes
+
+      WHERE
+        store_id = $1
+        AND active = TRUE
+    `,
+    [
+      storeId
+    ]
+  );
+
       const publicados =
         products
           .filter(
@@ -2666,18 +2689,96 @@ app.get(
               product.published !== false
           )
           .map(
-            (product) => ({
-              id:
-                Number(
-                  product.id
-                ),
+  (product) => {
 
-              name:
-                normalizarNomeProduto(
-                  product.name
-                )
-            })
-          )
+    const productId =
+  Number(
+    product.id
+  );
+
+const lote =
+  lotesAtivos.rows.find(
+    (item) =>
+      Number(item.product_id) ===
+      productId
+  );
+
+let remainingHours =
+  null;
+
+if (lote) {
+
+  const inicio =
+    lote.reopened === true &&
+    lote.reopened_at
+      ? new Date(
+          lote.reopened_at
+        ).getTime()
+      : new Date(
+          lote.created_at
+        ).getTime();
+
+  const duracao =
+    lote.reopened === true
+      ? 24 * 60 * 60 * 1000
+      : 72 * 60 * 60 * 1000;
+
+  const restante =
+    inicio +
+    duracao -
+    Date.now();
+
+  remainingHours =
+    Math.max(
+      0,
+      Math.ceil(
+        restante /
+        (60 * 60 * 1000)
+      )
+    );
+}
+
+    return {
+      id:
+        productId,
+
+      name:
+        normalizarNomeProduto(
+          product.name
+        ),
+
+      lot:
+  lote
+    ? {
+        current:
+          Number(
+            lote.current_quantity
+          ),
+
+        target:
+          Number(
+            lote.target_quantity
+          ),
+
+        remainingHours:
+          remainingHours,
+
+        createdAt:
+          lote.created_at,
+
+        reopened:
+          lote.reopened === true,
+
+              reopenedAt:
+                lote.reopened_at,
+
+              finalClosed:
+                lote.final_closed === true
+            }
+          : null
+    };
+  }
+)
           .sort(
             (a, b) =>
               a.name.localeCompare(
