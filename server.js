@@ -2857,15 +2857,14 @@ app.get(
     >
 
     <label>
-      Meta do novo lote
-    </label>
+  Produto
+</label>
 
-    <input
-      id="target"
-      type="number"
-      min="1"
-      placeholder="Ex: 15"
-    >
+<select id="productId">
+  <option value="">
+    Informe a chave abaixo para carregar os produtos
+  </option>
+</select>
 
     <label>
       Chave administrativa
