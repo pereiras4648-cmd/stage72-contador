@@ -2536,54 +2536,69 @@ FROM lotes
         );
 
       const percentage =
-        target > 0
-          ? Math.min(
-              Math.round(
-                (
-                  current /
-                  target
-                ) * 100
-              ),
-              100
-            )
-          : 0;
+  target > 0
+    ? Math.min(
+        Math.round(
+          (
+            current /
+            target
+          ) * 100
+        ),
+        100
+      )
+    : 0;
 
-      return res.json({
-        ok: true,
-
-        id:
-          lote.id,
-
-        storeId:
-          Number(
-            lote.store_id
-          ),
-
-        productId:
-          Number(
-            lote.product_id
-          ),
-
-        name:
-          lote.nome,
-
-        current,
-
-        target,
-
-        remaining,
-
-        percentage,
-
-finalClosed:
-  lote.final_closed === true,
-
-closed:
-  current >= target ||
-  lote.final_closed === true,
-
-endAt:
+const endAt =
   lote.end_at
+    ? new Date(lote.end_at)
+    : null;
+
+const expired =
+  endAt instanceof Date &&
+  !Number.isNaN(endAt.getTime()) &&
+  Date.now() >= endAt.getTime();
+
+const finalClosed =
+  lote.final_closed === true ||
+  expired;
+
+return res.json({
+  ok: true,
+
+  id:
+    lote.id,
+
+  storeId:
+    Number(
+      lote.store_id
+    ),
+
+  productId:
+    Number(
+      lote.product_id
+    ),
+
+  name:
+    lote.nome,
+
+  current,
+
+  target,
+
+  remaining,
+
+  percentage,
+
+  expired,
+
+  finalClosed,
+
+  closed:
+    current >= target ||
+    finalClosed,
+
+  endAt:
+    lote.end_at
 });
 
 } catch (error) {
