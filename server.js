@@ -2787,7 +2787,8 @@ app.get(
       letter-spacing: 1px;
     }
 
-    input {
+    input,
+select {
       width: 100%;
       padding: 15px;
       background: #111;
