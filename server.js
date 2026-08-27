@@ -2782,6 +2782,161 @@ app.get(
 
     <div id="resultado"></div>
 
+    <script>
+  const botao =
+    document.getElementById("criarLote");
+
+  const resultado =
+    document.getElementById("resultado");
+
+  botao.addEventListener(
+    "click",
+    async function () {
+
+      const productId =
+        Number(
+          document
+            .getElementById("productId")
+            .value
+        );
+
+      const target =
+        Number(
+          document
+            .getElementById("target")
+            .value
+        );
+
+      const adminKey =
+        document
+          .getElementById("adminKey")
+          .value
+          .trim();
+
+      if (
+        !Number.isInteger(productId) ||
+        productId <= 0
+      ) {
+        resultado.style.display =
+          "block";
+
+        resultado.textContent =
+          "Product ID inválido.";
+
+        return;
+      }
+
+      if (
+        !Number.isInteger(target) ||
+        target <= 0
+      ) {
+        resultado.style.display =
+          "block";
+
+        resultado.textContent =
+          "Meta do lote inválida.";
+
+        return;
+      }
+
+      if (!adminKey) {
+        resultado.style.display =
+          "block";
+
+        resultado.textContent =
+          "Informe a chave administrativa.";
+
+        return;
+      }
+
+      const confirmado =
+        confirm(
+          "Criar um novo lote 0/" +
+          target +
+          " para o produto " +
+          productId +
+          "?"
+        );
+
+      if (!confirmado) {
+        return;
+      }
+
+      botao.disabled = true;
+      botao.textContent =
+        "CRIANDO LOTE...";
+
+      resultado.style.display =
+        "block";
+
+      resultado.textContent =
+        "Processando...";
+
+      try {
+
+        const response =
+          await fetch(
+            "/api/admin/lotes/new",
+            {
+              method: "POST",
+
+              headers: {
+                "Content-Type":
+                  "application/json",
+
+                "x-stage72-admin-key":
+                  adminKey
+              },
+
+              body:
+                JSON.stringify({
+                  productId,
+                  target
+                })
+            }
+          );
+
+        const data =
+          await response.json();
+
+        if (!response.ok) {
+          throw new Error(
+            data.error ||
+            "Erro ao criar lote."
+          );
+        }
+
+        resultado.innerHTML =
+          "<strong>Novo lote criado.</strong><br>" +
+          "Produto: " +
+          data.lote.productId +
+          "<br>" +
+          "Meta: 0/" +
+          data.lote.target +
+          "<br>" +
+          "Lote ID: " +
+          data.lote.id;
+
+        document
+          .getElementById("target")
+          .value = "";
+
+      } catch (error) {
+
+        resultado.textContent =
+          "Erro: " +
+          error.message;
+
+      } finally {
+
+        botao.disabled = false;
+        botao.textContent =
+          "CRIAR NOVO LOTE";
+      }
+    }
+  );
+</script>
+
   </div>
 
 </body>
