@@ -426,7 +426,8 @@ async function buscarUltimaLoja() {
 async function garantirLote(
   storeId,
   productId,
-  productName = "Produto STAGE 72"
+  productName = "Produto STAGE 72",
+  targetQuantity = DEFAULT_TARGET
 ) {
 
   productId =
@@ -531,7 +532,7 @@ async function garantirLote(
         storeId,
         productId,
         nome,
-        DEFAULT_TARGET
+        targetQuantity
       ]
     );
 
