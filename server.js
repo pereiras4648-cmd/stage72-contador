@@ -2575,12 +2575,15 @@ FROM lotes
 
         percentage,
 
-        closed:
-  current >= target,
+finalClosed:
+  lote.final_closed === true,
+
+closed:
+  current >= target ||
+  lote.final_closed === true,
 
 endAt:
   lote.end_at
-      });
 
     } catch (error) {
 
