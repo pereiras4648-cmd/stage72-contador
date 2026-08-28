@@ -3652,12 +3652,6 @@ adminKeyInput.addEventListener(
             .value
         );
 
-      const adminKey =
-        document
-          .getElementById("adminKey")
-          .value
-          .trim();
-
       if (
         !Number.isInteger(productId) ||
         productId <= 0
@@ -3680,16 +3674,6 @@ adminKeyInput.addEventListener(
 
         resultado.textContent =
           "Meta do lote inválida.";
-
-        return;
-      }
-
-      if (!adminKey) {
-        resultado.style.display =
-          "block";
-
-        resultado.textContent =
-          "Informe a chave administrativa.";
 
         return;
       }
@@ -3725,12 +3709,10 @@ adminKeyInput.addEventListener(
             {
               method: "POST",
 
-              headers: {
-                "Content-Type":
-                  "application/json",
-
-                "x-stage72-admin-key":
-                  adminKey
+             headers: {
+  "Content-Type":
+    "application/json"
+},
               },
 
               body:
