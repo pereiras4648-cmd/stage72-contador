@@ -3454,17 +3454,7 @@ select {
   min="1"
   placeholder="Ex: 12"
 >
-
-    <label>
-      Chave administrativa
-    </label>
-
-    <input
-      id="adminKey"
-      type="password"
-      placeholder="STAGE72_ADMIN_KEY"
-    >
-
+  
     <button
       id="criarLote"
       type="button"
