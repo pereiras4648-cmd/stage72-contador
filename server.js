@@ -3495,13 +3495,6 @@ let stage72Produtos =
 
 async function carregarProdutos() {
 
-  const adminKey =
-    adminKeyInput.value.trim();
-
-  if (!adminKey) {
-    return;
-  }
-
   productSelect.innerHTML =
     '<option value="">Carregando produtos...</option>';
 
@@ -3509,29 +3502,23 @@ async function carregarProdutos() {
 
     const response =
       await fetch(
-        "/api/admin/products",
-        {
-          headers: {
-            "x-stage72-admin-key":
-              adminKey
-          }
-        }
+        "/api/admin/products"
       );
 
     const data =
-  await response.json();
+      await response.json();
 
-if (!response.ok) {
-  throw new Error(
-    data.error ||
-    "Erro ao carregar produtos."
-  );
-}
+    if (!response.ok) {
+      throw new Error(
+        data.error ||
+        "Erro ao carregar produtos."
+      );
+    }
 
-stage72Produtos =
-  Array.isArray(data.products)
-    ? data.products
-    : [];
+    stage72Produtos =
+      Array.isArray(data.products)
+        ? data.products
+        : [];
 
     productSelect.innerHTML =
       '<option value="">Selecione um produto</option>';
