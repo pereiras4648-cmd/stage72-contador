@@ -3478,9 +3478,6 @@ select {
   const botao =
     document.getElementById("criarLote");
 
- const adminKeyInput =
-  document.getElementById("adminKey");
-
 const productSelect =
   document.getElementById("productId");
 
