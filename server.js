@@ -2788,13 +2788,7 @@ app.get(
   "/api/admin/products",
   async (req, res) => {
 
-    const adminKey =
-      req.headers["x-stage72-admin-key"];
-
-    if (
-      !process.env.STAGE72_ADMIN_KEY ||
-      adminKey !== process.env.STAGE72_ADMIN_KEY
-    ) {
+    if (!adminAutorizado(req)) {
       return res
         .status(401)
         .json({
@@ -2802,7 +2796,6 @@ app.get(
           error: "Não autorizado"
         });
     }
-
     try {
 
       const store =
@@ -2985,13 +2978,323 @@ if (lote) {
 
 /*
 |--------------------------------------------------------------------------
+| STAGE 72 - LOGIN ADMIN
+|--------------------------------------------------------------------------
+*/
+
+app.post(
+  "/api/admin/login",
+  (req, res) => {
+
+    const chaveRecebida =
+      req.body?.key;
+
+    const chaveCorreta =
+      process.env.STAGE72_ADMIN_KEY;
+
+    if (
+      !chaveCorreta ||
+      !compararSegredoAdmin(
+        chaveRecebida,
+        chaveCorreta
+      )
+    ) {
+      return res
+        .status(401)
+        .json({
+          ok: false,
+          error: "Chave inválida"
+        });
+    }
+
+    const token =
+      criarTokenAdmin();
+
+    if (!token) {
+      return res
+        .status(500)
+        .json({
+          ok: false,
+          error:
+            "Sessão administrativa não configurada"
+        });
+    }
+
+    res.setHeader(
+      "Set-Cookie",
+      `stage72_admin=${encodeURIComponent(token)}; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=28800`
+    );
+
+    return res.json({
+      ok: true
+    });
+  }
+);
+
+app.post(
+  "/api/admin/logout",
+  (req, res) => {
+
+    res.setHeader(
+      "Set-Cookie",
+      "stage72_admin=; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=0"
+    );
+
+    return res.json({
+      ok: true
+    });
+  }
+);
+
+/*
+|--------------------------------------------------------------------------
 | STAGE 72 - PAINEL ADMIN
 |--------------------------------------------------------------------------
 */
 
+/*
+|--------------------------------------------------------------------------
+| STAGE 72 - TELA DE LOGIN ADMIN
+|--------------------------------------------------------------------------
+*/
+
+app.get(
+  "/admin/login",
+  (req, res) => {
+
+    if (adminAutorizado(req)) {
+      return res.redirect(
+        "/admin"
+      );
+    }
+
+    res.send(`
+<!DOCTYPE html>
+
+<html lang="pt-BR">
+
+<head>
+
+  <meta charset="UTF-8">
+
+  <meta
+    name="viewport"
+    content="width=device-width, initial-scale=1.0"
+  >
+
+  <title>STAGE 72 - Login</title>
+
+  <style>
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: #000;
+      color: #fff;
+      font-family: Arial, sans-serif;
+      padding: 20px;
+    }
+
+    .login {
+      width: 100%;
+      max-width: 420px;
+      padding: 32px;
+      background: #080808;
+      border: 1px solid #222;
+      border-radius: 8px;
+    }
+
+    h1 {
+      margin: 0 0 8px;
+      font-size: 30px;
+      font-weight: 900;
+    }
+
+    .cyan {
+      color: #00e5ff;
+    }
+
+    .subtitulo {
+      margin-bottom: 25px;
+      color: #888;
+      font-size: 14px;
+    }
+
+    label {
+      display: block;
+      margin-bottom: 8px;
+      font-size: 12px;
+      font-weight: bold;
+      letter-spacing: 1px;
+    }
+
+    input {
+      width: 100%;
+      padding: 14px;
+      background: #111;
+      color: #fff;
+      border: 1px solid #333;
+      border-radius: 5px;
+      outline: none;
+      font-size: 16px;
+    }
+
+    input:focus {
+      border-color: #00e5ff;
+    }
+
+    button {
+      width: 100%;
+      margin-top: 16px;
+      padding: 14px;
+      border: 0;
+      border-radius: 5px;
+      background: #00e5ff;
+      color: #000;
+      font-size: 14px;
+      font-weight: 900;
+      cursor: pointer;
+    }
+
+    #mensagem {
+      min-height: 20px;
+      margin-top: 15px;
+      color: #ff5c5c;
+      font-size: 13px;
+    }
+
+  </style>
+
+</head>
+
+<body>
+
+  <div class="login">
+
+    <h1>
+      STAGE <span class="cyan">72</span>
+    </h1>
+
+    <div class="subtitulo">
+      Acesso administrativo
+    </div>
+
+    <form id="loginForm">
+
+      <label for="adminKey">
+        CHAVE DE ACESSO
+      </label>
+
+      <input
+        id="adminKey"
+        type="password"
+        autocomplete="current-password"
+        required
+      >
+
+      <button type="submit">
+        ENTRAR
+      </button>
+
+      <div id="mensagem"></div>
+
+    </form>
+
+  </div>
+
+  <script>
+
+    const form =
+      document.getElementById(
+        "loginForm"
+      );
+
+    const adminKey =
+      document.getElementById(
+        "adminKey"
+      );
+
+    const mensagem =
+      document.getElementById(
+        "mensagem"
+      );
+
+    form.addEventListener(
+      "submit",
+      async function (event) {
+
+        event.preventDefault();
+
+        mensagem.textContent =
+          "Entrando...";
+
+        try {
+
+          const response =
+            await fetch(
+              "/api/admin/login",
+              {
+                method: "POST",
+
+                headers: {
+                  "Content-Type":
+                    "application/json"
+                },
+
+                body: JSON.stringify({
+                  key: adminKey.value
+                })
+              }
+            );
+
+          const data =
+            await response.json();
+
+          if (!response.ok) {
+            throw new Error(
+              data.error ||
+              "Não foi possível entrar."
+            );
+          }
+
+          window.location.href =
+            "/admin";
+
+        } catch (error) {
+
+          mensagem.textContent =
+            error.message ||
+            "Erro ao entrar.";
+
+        }
+      }
+    );
+
+  </script>
+
+</body>
+
+</html>
+    `);
+  }
+);
+
 app.get(
   "/admin",
   (req, res) => {
+
+    if (!adminAutorizado(req)) {
+      return res.redirect(
+        "/admin/login"
+      );
+    }
 
     res.send(`
 <!DOCTYPE html>
@@ -3511,19 +3814,7 @@ app.post(
   "/api/admin/lotes/new",
   async (req, res) => {
 
-    const adminKey =
-      req.headers["x-stage72-admin-key"];
-
-    /*
-    |--------------------------------------------------------------------------
-    | PROTEÇÃO ADMINISTRATIVA
-    |--------------------------------------------------------------------------
-    */
-
-    if (
-      !process.env.STAGE72_ADMIN_KEY ||
-      adminKey !== process.env.STAGE72_ADMIN_KEY
-    ) {
+    if (!adminAutorizado(req)) {
       return res
         .status(401)
         .json({
