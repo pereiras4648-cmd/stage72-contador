@@ -3117,6 +3117,63 @@ stage72Produtos =
   }
 }
 
+function mostrarLoteAtual() {
+
+  const productId =
+    Number(productSelect.value);
+
+  const product =
+    stage72Produtos.find(
+      function (item) {
+        return Number(item.id) === productId;
+      }
+    );
+
+  if (
+    !product ||
+    !product.lot
+  ) {
+    loteAtual.style.display =
+      "none";
+
+    loteAtual.innerHTML =
+      "";
+
+    return;
+  }
+
+  const lot =
+    product.lot;
+
+  const fechado =
+    lot.finalClosed === true ||
+    Number(lot.current) >= Number(lot.target) ||
+    Number(lot.remainingHours) <= 0;
+
+  loteAtual.style.display =
+    "block";
+
+  loteAtual.innerHTML =
+    '<div style="font-size:11px;color:#777;font-weight:bold;letter-spacing:1px;margin-bottom:8px;">LOTE ATUAL</div>' +
+    '<div style="font-size:22px;font-weight:900;">' +
+    lot.current +
+    ' / ' +
+    lot.target +
+    '</div>' +
+    '<div style="margin-top:5px;color:#00e5ff;font-weight:bold;">' +
+    (
+      fechado
+        ? 'LOTE FECHADO'
+        : lot.remainingHours + 'h restantes'
+    ) +
+    '</div>';
+}
+
+productSelect.addEventListener(
+  "change",
+  mostrarLoteAtual
+);
+
 adminKeyInput.addEventListener(
   "change",
   carregarProdutos
