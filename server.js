@@ -3427,7 +3427,7 @@ select {
 
 <select id="productId">
   <option value="">
-    Informe a chave abaixo para carregar os produtos
+     Carregando produtos...
   </option>
 </select>
 
