@@ -3048,57 +3048,40 @@ async function carregarProdutos() {
     const data =
   await response.json();
 
+if (!response.ok) {
+  throw new Error(
+    data.error ||
+    "Erro ao carregar produtos."
+  );
+}
+
 stage72Produtos =
   Array.isArray(data.products)
     ? data.products
     : [];
 
-    if (!response.ok) {
-      throw new Error(
-        data.error ||
-        "Erro ao carregar produtos."
-      );
-    }
-
     productSelect.innerHTML =
       '<option value="">Selecione um produto</option>';
 
     data.products.forEach(
-      function (product) {
+  function (product) {
 
-        const option =
-          document.createElement(
-            "option"
-          );
+    const option =
+      document.createElement(
+        "option"
+      );
 
-        option.value =
-          product.id;
+    option.value =
+      product.id;
 
-        if (product.lot) {
+    option.textContent =
+      product.name;
 
-  option.textContent =
-    product.name +
-    " — " +
-    product.lot.current +
-    "/" +
-    product.lot.target +
-    " — " +
-    product.lot.remainingHours +
-    "h restantes";
-
-} else {
-
-  option.textContent =
-    product.name +
-    " — Sem lote ativo";
-
-}
-
-        productSelect.appendChild(
-          option
-        );
-      }
+    productSelect.appendChild(
+      option
     );
+  }
+);
 
     stage72ProdutosCarregados =
       true;
