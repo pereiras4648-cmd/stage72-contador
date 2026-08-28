@@ -3479,13 +3479,32 @@ select {
 
     <script>
   const botao =
-    document.getElementById("criarLote");
+  document.getElementById("criarLote");
 
 const productSelect =
   document.getElementById("productId");
 
 const loteAtual =
   document.getElementById("loteAtual");
+
+const sairAdmin =
+  document.getElementById("sairAdmin");
+
+sairAdmin.addEventListener(
+  "click",
+  async function () {
+
+    await fetch(
+      "/api/admin/logout",
+      {
+        method: "POST"
+      }
+    );
+
+    window.location.href =
+      "/admin/login";
+  }
+);
 
 let stage72ProdutosCarregados =
   false;
