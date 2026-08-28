@@ -3614,26 +3614,11 @@ productSelect.addEventListener(
   mostrarLoteAtual
 );
 
-adminKeyInput.addEventListener(
-  "change",
-  carregarProdutos
-);
+carregarProdutos();
 
-adminKeyInput.addEventListener(
-  "blur",
-  function () {
-
-    if (
-      !stage72ProdutosCarregados
-    ) {
-      carregarProdutos();
-    }
-  }
-);
-
-  botao.addEventListener(
-    "click",
-    async function () {
+botao.addEventListener(
+  "click",
+  async function () {
 
       const productId =
         Number(
