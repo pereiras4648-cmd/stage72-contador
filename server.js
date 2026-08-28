@@ -3714,27 +3714,33 @@ botao.addEventListener(
       try {
 
         const response =
-          await fetch(
-            "/api/admin/lotes/new",
-            {
-              method: "POST",
+  await fetch(
+    "/api/admin/lotes/new",
+    {
+      method: "POST",
 
-             headers: {
-  "Content-Type":
-    "application/json"
-},
-              },
+      headers: {
+        "Content-Type":
+          "application/json"
+      },
 
-              body:
-                JSON.stringify({
-                  productId,
-                  target
-                })
-            }
-          );
+      body:
+        JSON.stringify({
+          productId,
+          target
+        })
+    }
+  );
 
-        const data =
-          await response.json();
+if (response.status === 401) {
+  window.location.href =
+    "/admin/login";
+
+  return;
+}
+
+const data =
+  await response.json();
 
         if (!response.ok) {
           throw new Error(
