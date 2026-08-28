@@ -1,5 +1,6 @@
 const express = require("express");
 const { Pool } = require("pg");
+const crypto = require("crypto");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -67,6 +68,9 @@ const API_BASE =
 
 const BASE_URL =
   "https://stage72-contador.onrender.com";
+
+const ADMIN_SESSION_SECRET =
+  process.env.STAGE72_ADMIN_SESSION_SECRET;
 
 const ORDER_WEBHOOK_URL =
   `${BASE_URL}/webhooks/orders`;
@@ -1657,6 +1661,172 @@ await client.query(
 
     client.release();
   }
+}
+
+/*
+|--------------------------------------------------------------------------
+| SESSÃO ADMIN STAGE 72
+|--------------------------------------------------------------------------
+*/
+
+function criarAssinaturaAdmin(valor) {
+
+  if (!ADMIN_SESSION_SECRET) {
+    return null;
+  }
+
+  return crypto
+    .createHmac(
+      "sha256",
+      ADMIN_SESSION_SECRET
+    )
+    .update(valor)
+    .digest("hex");
+}
+
+function compararSegredoAdmin(
+  recebido,
+  esperado
+) {
+
+  const a =
+    Buffer.from(
+      String(recebido || "")
+    );
+
+  const b =
+    Buffer.from(
+      String(esperado || "")
+    );
+
+  return (
+    a.length === b.length &&
+    crypto.timingSafeEqual(a, b)
+  );
+}
+
+function lerCookieAdmin(req) {
+
+  const header =
+    req.headers.cookie || "";
+
+  const cookies =
+    header
+      .split(";")
+      .map(
+        (item) =>
+          item.trim()
+      );
+
+  const prefixo =
+    "stage72_admin=";
+
+  const cookie =
+    cookies.find(
+      (item) =>
+        item.startsWith(prefixo)
+    );
+
+  if (!cookie) {
+    return null;
+  }
+
+  return decodeURIComponent(
+    cookie.slice(prefixo.length)
+  );
+}
+
+function criarTokenAdmin() {
+
+  const expiraEm =
+    Date.now() +
+    8 * 60 * 60 * 1000;
+
+  const nonce =
+    crypto
+      .randomBytes(24)
+      .toString("hex");
+
+  const conteudo =
+    `${expiraEm}.${nonce}`;
+
+  const assinatura =
+    criarAssinaturaAdmin(
+      conteudo
+    );
+
+  if (!assinatura) {
+    return null;
+  }
+
+  return (
+    `${conteudo}.${assinatura}`
+  );
+}
+
+function validarTokenAdmin(token) {
+
+  if (
+    !token ||
+    !ADMIN_SESSION_SECRET
+  ) {
+    return false;
+  }
+
+  const partes =
+    String(token).split(".");
+
+  if (partes.length !== 3) {
+    return false;
+  }
+
+  const [
+    expiraEm,
+    nonce,
+    assinaturaRecebida
+  ] = partes;
+
+  const expiracao =
+    Number(expiraEm);
+
+  if (
+    !Number.isFinite(expiracao) ||
+    Date.now() >= expiracao
+  ) {
+    return false;
+  }
+
+  const conteudo =
+    `${expiraEm}.${nonce}`;
+
+  const assinaturaEsperada =
+    criarAssinaturaAdmin(
+      conteudo
+    );
+
+  if (!assinaturaEsperada) {
+    return false;
+  }
+
+  return compararSegredoAdmin(
+    assinaturaRecebida,
+    assinaturaEsperada
+  );
+} 
+
+function adminAutorizado(req) {
+
+  const token =
+    lerCookieAdmin(req);
+
+  if (
+    token &&
+    validarTokenAdmin(token)
+  ) {
+    return true;
+  }
+
+  return false;
 }
 
 /*
