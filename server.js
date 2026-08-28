@@ -3062,6 +3062,11 @@ app.get(
   "/admin/login",
   (req, res) => {
 
+    res.setHeader(
+      "Cache-Control",
+      "no-store"
+    );
+
     if (adminAutorizado(req)) {
       return res.redirect(
         "/admin"
@@ -3072,7 +3077,6 @@ app.get(
 <!DOCTYPE html>
 
 <html lang="pt-BR">
-
 <head>
 
   <meta charset="UTF-8">
@@ -3289,6 +3293,11 @@ app.get(
 app.get(
   "/admin",
   (req, res) => {
+
+    res.setHeader(
+      "Cache-Control",
+      "no-store"
+    );
 
     if (!adminAutorizado(req)) {
       return res.redirect(
