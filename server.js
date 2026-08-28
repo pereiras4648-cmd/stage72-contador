@@ -3418,13 +3418,26 @@ select {
     </div>
 
     <div class="subtitle">
-      Gerenciamento de lotes
-    </div>
+  Gerenciamento de lotes
+</div>
 
-    <label>
+<button
+  id="sairAdmin"
+  type="button"
+  style="
+    margin-top: 0;
+    margin-bottom: 10px;
+    background: #161616;
+    color: #ffffff;
+    border: 1px solid #333;
+  "
+>
+  SAIR
+</button>
+
+<label>
   Produto
 </label>
-
 <select id="productId">
   <option value="">
      Carregando produtos...
