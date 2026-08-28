@@ -3520,13 +3520,19 @@ async function carregarProdutos() {
   try {
 
     const response =
-      await fetch(
-        "/api/admin/products"
-      );
+  await fetch(
+    "/api/admin/products"
+  );
 
-    const data =
-      await response.json();
+if (response.status === 401) {
+  window.location.href =
+    "/admin/login";
 
+  return;
+}
+
+const data =
+  await response.json();
     if (!response.ok) {
       throw new Error(
         data.error ||
