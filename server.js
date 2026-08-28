@@ -2958,6 +2958,19 @@ select {
   </option>
 </select>
 
+<div
+  id="loteAtual"
+  style="
+    display: none;
+    margin-top: 14px;
+    padding: 16px;
+    background: #0c0c0c;
+    border: 1px solid #222;
+    border-radius: 6px;
+  "
+>
+</div>
+
 <label>
   Meta do novo lote
 </label>
@@ -2998,8 +3011,14 @@ select {
 const productSelect =
   document.getElementById("productId");
 
+const loteAtual =
+  document.getElementById("loteAtual");
+
 let stage72ProdutosCarregados =
   false;
+
+let stage72Produtos =
+  [];
 
 async function carregarProdutos() {
 
@@ -3027,7 +3046,12 @@ async function carregarProdutos() {
       );
 
     const data =
-      await response.json();
+  await response.json();
+
+stage72Produtos =
+  Array.isArray(data.products)
+    ? data.products
+    : [];
 
     if (!response.ok) {
       throw new Error(
