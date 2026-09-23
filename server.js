@@ -4287,6 +4287,7 @@ app.get(
 
 app.get(
   "/api/reprocess-order/:orderId",
+  exigirAdmin,
   async (req, res) => {
 
     try {
