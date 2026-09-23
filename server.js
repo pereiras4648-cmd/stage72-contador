@@ -4366,6 +4366,7 @@ app.get(
 
 app.get(
   "/api/setup-webhooks",
+  exigirAdmin,
   async (req, res) => {
 
     try {
