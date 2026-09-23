@@ -2412,8 +2412,8 @@ app.post(
 
 app.get(
   "/api/sync-products",
+  exigirAdmin,
   async (req, res) => {
-
     try {
 
       const store =
